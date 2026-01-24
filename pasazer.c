@@ -1,6 +1,9 @@
 #include "common.h"
 
 void zakoncz_podroz(int semid, SharedData *sd, const char* powod, int id) {
+    (void)powod;
+    (void)id; 
+    
     s_op(semid, SEM_SYSTEM_MUTEX, -1);
     sd->pasazerowie_w_systemie--;
     s_op(semid, SEM_SYSTEM_MUTEX, 1);
@@ -108,30 +111,40 @@ int main(int argc, char* argv[]) {
         
         for (int i = 0; i < LICZBA_STANOWISK_KONTROLI; i++) {
             if (sd->sec_liczba[i] == 0) {
-                sd->sec_liczba[i]++; sd->sec_plec[i] = plec;
-                bramka_nr = i; na_kontroli = true; break;
+                sd->sec_liczba[i] = 1;
+                sd->sec_plec[i] = plec;
+                bramka_nr = i; 
+                na_kontroli = true; 
+                break;
             }
         }
         
         if (!na_kontroli) {
             for (int i = 0; i < LICZBA_STANOWISK_KONTROLI; i++) {
-                if (sd->sec_liczba[i] < MAX_OS_NA_KONTROLI && sd->sec_plec[i] == plec) {
-                    sd->sec_liczba[i]++; bramka_nr = i; na_kontroli = true; break;
+                if (sd->sec_liczba[i] == 1 && sd->sec_plec[i] == plec) { 
+                    sd->sec_liczba[i] = 2;
+                    bramka_nr = i; 
+                    na_kontroli = true; 
+                    break;
                 }
             }
         }
 
-        if (na_kontroli) {
-            s_op(semid, SEM_SEC_MUTEX, 1); 
-        } else {
+        if (!na_kontroli) {
             if (frustracja >= 3) {
-                 if (plec == PLEC_M) sd->czekajacy_prio_m++; else sd->czekajacy_prio_k++;
-                 s_op(semid, SEM_SEC_MUTEX, 1); s_op(semid, sem_prio, -1); 
+                if (plec == PLEC_M) sd->czekajacy_prio_m++; 
+                else sd->czekajacy_prio_k++;
+                s_op(semid, SEM_SEC_MUTEX, 1); 
+                s_op(semid, sem_prio, -1);
             } else {
-                 frustracja++;
-                 if (plec == PLEC_M) sd->czekajacy_m++; else sd->czekajacy_k++;
-                 s_op(semid, SEM_SEC_MUTEX, 1); s_op(semid, sem_kolejka, -1); 
+                frustracja++;
+                if (plec == PLEC_M) sd->czekajacy_m++; 
+                else sd->czekajacy_k++;
+                s_op(semid, SEM_SEC_MUTEX, 1); 
+                s_op(semid, sem_kolejka, -1);
             }
+        } else {
+            s_op(semid, SEM_SEC_MUTEX, 1); 
         }
     }
 
@@ -144,21 +157,25 @@ int main(int argc, char* argv[]) {
     bool pasuje_M = (sd->sec_liczba[bramka_nr] == 0 || sd->sec_plec[bramka_nr] == PLEC_M);
     bool pasuje_K = (sd->sec_liczba[bramka_nr] == 0 || sd->sec_plec[bramka_nr] == PLEC_K);
 
-    if (pasuje_M && sd->czekajacy_prio_m > 0) { kogo_budzic = PLEC_M; budzic_prio = true; }
-    else if (pasuje_K && sd->czekajacy_prio_k > 0) { kogo_budzic = PLEC_K; budzic_prio = true; }
-    else if (pasuje_M && sd->czekajacy_m > 0) { kogo_budzic = PLEC_M; }
-    else if (pasuje_K && sd->czekajacy_k > 0) { kogo_budzic = PLEC_K; }
+    if (pasuje_M && sd->czekajacy_prio_m > 0) { 
+        kogo_budzic = PLEC_M; budzic_prio = true; 
+    } else if (pasuje_K && sd->czekajacy_prio_k > 0) { 
+        kogo_budzic = PLEC_K; budzic_prio = true; 
+    } else if (pasuje_M && sd->czekajacy_m > 0) { 
+        kogo_budzic = PLEC_M; 
+    } else if (pasuje_K && sd->czekajacy_k > 0) { 
+        kogo_budzic = PLEC_K; 
+    }
     
     if (kogo_budzic == PLEC_M) {
         if (budzic_prio) { 
-            s_op(semid, SEM_SEC_PRIO_M, 1);
-            sd->czekajacy_prio_m--;
+            s_op(semid, SEM_SEC_PRIO_M, 1); 
+            sd->czekajacy_prio_m--; 
         } else { 
             s_op(semid, SEM_SEC_Q_M, 1);
             sd->czekajacy_m--;
         }
-    }
-    else if (kogo_budzic == PLEC_K) {
+    } else if (kogo_budzic == PLEC_K) {
         if (budzic_prio) { 
             s_op(semid, SEM_SEC_PRIO_K, 1);
             sd->czekajacy_prio_k--;
@@ -173,73 +190,126 @@ int main(int argc, char* argv[]) {
     logger(C_C, "P%d [%c]: Przeszedł kontrolę (Bramka %d, VIP: %s).", 
            id, c_plec, bramka_nr, is_vip ? "TAK" : "NIE");
 
-    s_op(semid, SEM_POCZEKALNIA, -1);
+    if (is_vip) {
+        logger(C_M, "P%d [VIP]: Omijam poczekalnię, idę prosto do trapu!", id);
+        
+        s_op(semid, SEM_TRAP_MUTEX, -1);
+        sd->trap_wait_vip++;
+        s_op(semid, SEM_TRAP_MUTEX, 1);
+        
+        s_op(semid, SEM_TRAP_Q_VIP, -1);
+    } else {
+        s_op(semid, SEM_POCZEKALNIA, -1);
+        
+        s_op(semid, SEM_TRAP_MUTEX, -1);
+        sd->trap_wait_norm++;
+        s_op(semid, SEM_TRAP_MUTEX, 1);
+        
+        s_op(semid, SEM_TRAP_Q_NORM, -1);
+    }
     
     bool w_srodku = false;
+    int moja_pozycja_na_trapie = -1;
+    
     while (!w_srodku) {
         s_op(semid, SEM_TRAP_MUTEX, -1);
         
         if (!sd->zaladunek_aktywny || !sd->prom_w_porcie) {
             s_op(semid, SEM_TRAP_MUTEX, 1); 
+            
+            if (moja_pozycja_na_trapie >= 0) {
+                s_op(semid, SEM_TRAP_MUTEX, -1);
+                sd->trap_count--;
+                moja_pozycja_na_trapie = -1;
+                sd->trap_wait_return++;
+                s_op(semid, SEM_TRAP_MUTEX, 1);
+                s_op(semid, SEM_TRAP_Q_RETURN, -1);
+            }
             continue;
         }
         
         if (waga > sd->limit_bagazu_aktualny) {
-             s_op(semid, SEM_TRAP_MUTEX, 1); 
-             continue;
+            s_op(semid, SEM_TRAP_MUTEX, 1); 
+            
+            if (moja_pozycja_na_trapie >= 0) {
+                s_op(semid, SEM_TRAP_MUTEX, -1);
+                sd->trap_count--;
+                moja_pozycja_na_trapie = -1;
+                sd->trap_wait_return++;
+                s_op(semid, SEM_TRAP_MUTEX, 1);
+                s_op(semid, SEM_TRAP_Q_RETURN, -1);
+            }
+            continue;
         }
 
-        s_op(semid, SEM_TRAP_MUTEX, 1);
-        
         if (s_op_nowait(semid, SEM_FERRY_CAPACITY, -1) == -1) {
+            s_op(semid, SEM_TRAP_MUTEX, 1);
+            
+            if (moja_pozycja_na_trapie >= 0) {
+                s_op(semid, SEM_TRAP_MUTEX, -1);
+                logger(C_Y, "P%d: Prom pełny! Schodzę z trapu (pozycja %d) i wracam do kolejki.", 
+                       id, moja_pozycja_na_trapie);
+                sd->trap_count--;
+                moja_pozycja_na_trapie = -1;
+                sd->trap_wait_return++;
+                s_op(semid, SEM_TRAP_MUTEX, 1);
+                s_op(semid, SEM_TRAP_Q_RETURN, -1);
+            }
             continue;
         }
 
         bool na_trapie = false;
-        while (!na_trapie) {
-            s_op(semid, SEM_TRAP_MUTEX, -1);
+        
+        if (!sd->zaladunek_aktywny) {
+            s_op(semid, SEM_FERRY_CAPACITY, 1); 
+            s_op(semid, SEM_TRAP_MUTEX, 1);
             
-            if (!sd->zaladunek_aktywny) {
-                s_op(semid, SEM_FERRY_CAPACITY, 1); 
+            if (moja_pozycja_na_trapie >= 0) {
+                s_op(semid, SEM_TRAP_MUTEX, -1);
+                sd->trap_count--;
+                moja_pozycja_na_trapie = -1;
+                sd->trap_wait_return++;
                 s_op(semid, SEM_TRAP_MUTEX, 1);
-                break; 
+                s_op(semid, SEM_TRAP_Q_RETURN, -1);
             }
+            continue;
+        }
 
-            if (sd->trap_count < K_TRAP) {
-                sd->trap_count++; 
-                na_trapie = true; 
-                s_op(semid, SEM_TRAP_MUTEX, 1);
+        if (sd->trap_count < K_TRAP) {
+            sd->trap_count++;
+            moja_pozycja_na_trapie = sd->trap_count;
+            na_trapie = true; 
+        } else {
+            s_op(semid, SEM_FERRY_CAPACITY, 1);
+            s_op(semid, SEM_TRAP_MUTEX, 1);
+            
+            if (is_vip) {
+                s_op(semid, SEM_TRAP_Q_VIP, -1);
             } else {
-                if (is_vip) { 
-                    sd->trap_wait_vip++; 
-                    s_op(semid, SEM_TRAP_MUTEX, 1); 
-                    s_op(semid, SEM_TRAP_Q_VIP, -1); 
-                } else { 
-                    sd->trap_wait_norm++; 
-                    s_op(semid, SEM_TRAP_MUTEX, 1); 
-                    s_op(semid, SEM_TRAP_Q_NORM, -1); 
-                }
+                s_op(semid, SEM_TRAP_Q_NORM, -1);
             }
+            continue;
         }
 
         if (na_trapie) {
-            
-            s_op(semid, SEM_TRAP_MUTEX, -1);
-            
             if (is_vip) {
-                logger(C_G, "P%d [VIP]: W promie nr %d.", id, sd->prom_numer);
+                logger(C_G, "P%d [VIP]: W promie nr %d (ominąłem kolejkę!).", id, sd->prom_numer);
             } else {
                 logger(C_G, "P%d [STD]: W promie nr %d.", id, sd->prom_numer);
             }
 
             sd->trap_count--;
+            moja_pozycja_na_trapie = -1;
             
-            if (sd->trap_wait_vip > 0) { 
+            if (sd->trap_wait_return > 0) {
+                s_op(semid, SEM_TRAP_Q_RETURN, 1);
+                sd->trap_wait_return--;
+            } else if (sd->trap_wait_vip > 0) { 
+                s_op(semid, SEM_TRAP_Q_VIP, 1);
                 sd->trap_wait_vip--; 
-                s_op(semid, SEM_TRAP_Q_VIP, 1); 
             } else if (sd->trap_wait_norm > 0) { 
+                s_op(semid, SEM_TRAP_Q_NORM, 1);
                 sd->trap_wait_norm--; 
-                s_op(semid, SEM_TRAP_Q_NORM, 1); 
             }
             s_op(semid, SEM_TRAP_MUTEX, 1);
             w_srodku = true;

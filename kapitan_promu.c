@@ -7,7 +7,8 @@ typedef struct {
 
 volatile bool force_departure = false;
 
-void handle_sigusr1(int sig) { 
+void handle_sigusr1(int sig) {
+    (void)sig;
     force_departure = true; 
     logger(C_M, "[PROM] Otrzymano SYGNAŁ 1 (SIGUSR1)!");
 }
@@ -94,18 +95,21 @@ int main() {
         }
         
         s_op(semid, SEM_TRAP_MUTEX, -1);
-        for (int i = 0; i < K_TRAP; i++) {
+        
+        int ile_budzic = K_TRAP;
+        
+        for (int i = 0; i < ile_budzic; i++) {
             if (sd->trap_wait_return > 0) {
-                sd->trap_wait_return--;
                 s_op(semid, SEM_TRAP_Q_RETURN, 1);
+                sd->trap_wait_return--;             
             } else if (sd->trap_wait_vip > 0) {
-                sd->trap_wait_vip--;
                 s_op(semid, SEM_TRAP_Q_VIP, 1);
+                sd->trap_wait_vip--;
             } else if (sd->trap_wait_norm > 0) {
-                sd->trap_wait_norm--;
                 s_op(semid, SEM_TRAP_Q_NORM, 1);
+                sd->trap_wait_norm--;
             } else {
-                break;
+                break;  
             }
         }
         s_op(semid, SEM_TRAP_MUTEX, 1);
@@ -146,18 +150,16 @@ int main() {
             }
         }
         
-        if (!time_up) {
-            int wolne = semctl(semid, SEM_FERRY_CAPACITY, GETVAL);
-            if (wolne == 0) {
-                logger(C_B, "[PROM %d] Komplet! Zamykam wejście.", statek->id);
-            } else {
-                s_op(semid, SEM_SYSTEM_MUTEX, -1);
-                if (sd->pasazerowie_w_systemie <= 0 && wolne == P_POJEMNOSC) {
-                    s_op(semid, SEM_SYSTEM_MUTEX, 1);
-                    logger(C_B, "[PROM %d] Brak oczekujących. Wypływam.", statek->id);
-                } else {
-                    s_op(semid, SEM_SYSTEM_MUTEX, 1);
-                }
+        int wolne = semctl(semid, SEM_FERRY_CAPACITY, GETVAL);
+        if (wolne == 0) {
+            logger(C_B, "[PROM %d] Komplet! Zamykam wejście.", statek->id);
+        } else {
+            s_op(semid, SEM_SYSTEM_MUTEX, -1);
+            int pozostali = sd->pasazerowie_w_systemie;
+            s_op(semid, SEM_SYSTEM_MUTEX, 1);
+            
+            if (pozostali <= 0 && wolne == P_POJEMNOSC) {
+                logger(C_B, "[PROM %d] Brak oczekujących. Wypływam.", statek->id);
             }
         }
 
@@ -187,9 +189,14 @@ int main() {
             logger(C_B, "   >>> [PROM %d] ODPŁYWA (Pasażerów: %d). Rejs %ds.", 
                    moje_id, on_board, Ti_REJS);
             
-            struct timespec ts_rejs = {Ti_REJS, 0};
-            struct sembuf sb_dummy = {SEM_TIMER_SIGNAL, -1, 0};
-            semtimedop(semid, &sb_dummy, 1, &ts_rejs);
+            time_t start_time;
+            time(&start_time);
+            time_t current_time;
+            time(&current_time);
+            
+            while ((current_time - start_time) < Ti_REJS) {
+                time(&current_time);
+            }
             
             logger(C_B, "   <<< [PROM %d] WRÓCIŁ do bazy.", moje_id);
             
