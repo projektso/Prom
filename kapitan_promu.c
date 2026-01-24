@@ -92,6 +92,23 @@ int main() {
             s_op(semid, SEM_FERRY_READY, 1);
             first_run = false;
         }
+        
+        s_op(semid, SEM_TRAP_MUTEX, -1);
+        for (int i = 0; i < K_TRAP; i++) {
+            if (sd->trap_wait_return > 0) {
+                sd->trap_wait_return--;
+                s_op(semid, SEM_TRAP_Q_RETURN, 1);
+            } else if (sd->trap_wait_vip > 0) {
+                sd->trap_wait_vip--;
+                s_op(semid, SEM_TRAP_Q_VIP, 1);
+            } else if (sd->trap_wait_norm > 0) {
+                sd->trap_wait_norm--;
+                s_op(semid, SEM_TRAP_Q_NORM, 1);
+            } else {
+                break;
+            }
+        }
+        s_op(semid, SEM_TRAP_MUTEX, 1);
 
         struct timespec timeout;
         timeout.tv_sec = T1_OCZEKIWANIE;

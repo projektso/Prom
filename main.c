@@ -151,6 +151,7 @@ int main(int argc, char* argv[]) {
     semctl(semid, SEM_TRAP_MUTEX, SETVAL, 1);
     semctl(semid, SEM_TRAP_Q_VIP, SETVAL, 0);
     semctl(semid, SEM_TRAP_Q_NORM, SETVAL, 0);
+    semctl(semid, SEM_TRAP_Q_RETURN, SETVAL, 0);
     semctl(semid, SEM_FERRY_CAPACITY, SETVAL, P_POJEMNOSC);
     semctl(semid, SEM_FLOTA, SETVAL, N_FLOTA);
     semctl(semid, SEM_TIMER_SIGNAL, SETVAL, 0);

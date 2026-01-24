@@ -34,7 +34,7 @@
 #define LICZBA_STANOWISK_ODPRAWY 2 
 #define LICZBA_STANOWISK_KONTROLI 3
 #define MAX_OS_NA_KONTROLI 2
-#define Mp_START 20       
+#define Mp_LIMIT_ODPRAWY 20    
 
 #define PLEC_BRAK 0
 #define PLEC_M 1
@@ -55,7 +55,8 @@ enum {
     SEM_POCZEKALNIA, 
     SEM_TRAP_MUTEX, 
     SEM_TRAP_Q_VIP, 
-    SEM_TRAP_Q_NORM,    
+    SEM_TRAP_Q_NORM,
+    SEM_TRAP_Q_RETURN,
     
     SEM_FERRY_CAPACITY, 
     SEM_SYSTEM_MUTEX,
@@ -96,7 +97,8 @@ typedef struct {
 
     int trap_count;         
     int trap_wait_vip;      
-    int trap_wait_norm;     
+    int trap_wait_norm;
+    int trap_wait_return;
 
 } SharedData;
 

@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
 
         s_op(semid, SEM_ODPRAWA, -1); 
         
-        if (waga > sd->limit_bagazu_aktualny) {
+        if (waga > Mp_LIMIT_ODPRAWY) {
             s_op(semid, SEM_ODPRAWA, 1); 
             waga -= (2 + rand() % 5);
             if (waga < 0) waga = 0;
