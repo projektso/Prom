@@ -1,38 +1,23 @@
 CC = gcc
-CFLAGS = -Wall -D_GNU_SOURCE
-LDFLAGS = -lrt
+CFLAGS = -Wall -Wextra -pthread -g -O2
 
-TARGETS = main pasazer kapitan_promu kapitan_portu
-
-all: $(TARGETS)
+all: main pasazer kapitan_promu kapitan_portu
 
 main: main.c common.h
-	$(CC) $(CFLAGS) -o main main.c $(LDFLAGS)
-
-
-
+	$(CC) $(CFLAGS) -o main main.c
 
 pasazer: pasazer.c common.h
-	$(CC) $(CFLAGS) -o pasazer pasazer.c $(LDFLAGS)
-
-
-
+	$(CC) $(CFLAGS) -o pasazer pasazer.c
 
 kapitan_promu: kapitan_promu.c common.h
-	$(CC) $(CFLAGS) -o kapitan\_promu kapitan\_promu.c $(LDFLAGS)
-
-
-
+	$(CC) $(CFLAGS) -o kapitan_promu kapitan_promu.c
 
 kapitan_portu: kapitan_portu.c common.h
-	$(CC) $(CFLAGS) -o kapitan\_portu kapitan\_portu.c $(LDFLAGS)
-
-
-
+	$(CC) $(CFLAGS) -o kapitan_portu kapitan_portu.c
 
 clean:
-	rm -f $(TARGETS)**
+	rm -f main pasazer kapitan_promu kapitan_portu symulacja_prom.txt
+	ipcrm -a 2>/dev/null || true
 
-		ipcrm --all=shm 2>/dev/null || true
-
-		ipcrm --all=sem 2>/dev/null || true
+run: all
+	./main 30

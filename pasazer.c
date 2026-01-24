@@ -6,17 +6,48 @@ void zakoncz_podroz(int semid, SharedData *sd, const char* powod, int id) {
     s_op(semid, SEM_SYSTEM_MUTEX, 1);
     
     s_op(semid, SEM_PROCESY, 1);
+    
+    if (sd) shmdt(sd);
     exit(0);
 }
 
 int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Usage: pasazer <id>\n");
+        exit(1);
+    }
+    
     int id = atoi(argv[1]);
+    if (id <= 0) {
+        fprintf(stderr, "Invalid passenger ID: %s\n", argv[1]);
+        exit(1);
+    }
+    
     srand(time(NULL) ^ (getpid() << 16) ^ id);
 
     key_t key = ftok(PATH_NAME, PROJECT_ID);
+    if (key == -1) {
+        perror("ftok failed in pasazer");
+        exit(1);
+    }
+    
     int semid = semget(key, SEM_COUNT, 0600);
+    if (semid == -1) {
+        perror("semget failed in pasazer");
+        exit(1);
+    }
+    
     int shmid = shmget(key, sizeof(SharedData), 0600);
+    if (shmid == -1) {
+        perror("shmget failed in pasazer");
+        exit(1);
+    }
+    
     SharedData *sd = (SharedData*)shmat(shmid, NULL, 0);
+    if (sd == (void*)-1) {
+        perror("shmat failed in pasazer");
+        exit(1);
+    }
 
     int waga = 15 + (rand() % 20); 
 
@@ -39,14 +70,12 @@ int main(int argc, char* argv[]) {
         }
 
         s_op(semid, SEM_ODPRAWA, -1); 
-        custom_sleep(50); 
         
         if (waga > sd->limit_bagazu_aktualny) {
             s_op(semid, SEM_ODPRAWA, 1); 
             waga -= (2 + rand() % 5);
             if (waga < 0) waga = 0;
             proby++;
-            custom_sleep(100); 
         } else {
             logger(C_G, "P%d: Odprawiony (próba %d, bagaż %d kg).", id, proby, waga);
             odprawiony = true;
@@ -106,8 +135,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    custom_sleep(50);
-
     s_op(semid, SEM_SEC_MUTEX, -1);
     sd->sec_liczba[bramka_nr]--;
     if (sd->sec_liczba[bramka_nr] == 0) sd->sec_plec[bramka_nr] = PLEC_BRAK;
@@ -123,12 +150,22 @@ int main(int argc, char* argv[]) {
     else if (pasuje_K && sd->czekajacy_k > 0) { kogo_budzic = PLEC_K; }
     
     if (kogo_budzic == PLEC_M) {
-        if (budzic_prio) { sd->czekajacy_prio_m--; s_op(semid, SEM_SEC_PRIO_M, 1); }
-        else { sd->czekajacy_m--; s_op(semid, SEM_SEC_Q_M, 1); }
+        if (budzic_prio) { 
+            s_op(semid, SEM_SEC_PRIO_M, 1);
+            sd->czekajacy_prio_m--;
+        } else { 
+            s_op(semid, SEM_SEC_Q_M, 1);
+            sd->czekajacy_m--;
+        }
     }
     else if (kogo_budzic == PLEC_K) {
-        if (budzic_prio) { sd->czekajacy_prio_k--; s_op(semid, SEM_SEC_PRIO_K, 1); }
-        else { sd->czekajacy_k--; s_op(semid, SEM_SEC_Q_K, 1); }
+        if (budzic_prio) { 
+            s_op(semid, SEM_SEC_PRIO_K, 1);
+            sd->czekajacy_prio_k--;
+        } else { 
+            s_op(semid, SEM_SEC_Q_K, 1);
+            sd->czekajacy_k--;
+        }
     }
     s_op(semid, SEM_SEC_MUTEX, 1);
 
@@ -143,59 +180,66 @@ int main(int argc, char* argv[]) {
         s_op(semid, SEM_TRAP_MUTEX, -1);
         
         if (!sd->zaladunek_aktywny || !sd->prom_w_porcie) {
-            s_op(semid, SEM_TRAP_MUTEX, 1); custom_sleep(200); continue;
+            s_op(semid, SEM_TRAP_MUTEX, 1); 
+            continue;
         }
         
         if (waga > sd->limit_bagazu_aktualny) {
-             logger(C_R, "P%d: Bagaż (%d) za ciężki na ten prom (Limit %d). Czekam.", 
-                    id, waga, sd->limit_bagazu_aktualny);
-             s_op(semid, SEM_TRAP_MUTEX, 1); sleep(2); continue;
+             s_op(semid, SEM_TRAP_MUTEX, 1); 
+             continue;
         }
 
         s_op(semid, SEM_TRAP_MUTEX, 1);
         
-        struct sembuf sb = {SEM_FERRY_CAPACITY, -1, 0};
-        if (semop(semid, &sb, 1) == -1) continue;
+        if (s_op_nowait(semid, SEM_FERRY_CAPACITY, -1) == -1) {
+            continue;
+        }
 
         bool na_trapie = false;
         while (!na_trapie) {
             s_op(semid, SEM_TRAP_MUTEX, -1);
             
-            if (!sd->zaladunek_aktywny || waga > sd->limit_bagazu_aktualny) {
+            if (!sd->zaladunek_aktywny) {
                 s_op(semid, SEM_FERRY_CAPACITY, 1); 
                 s_op(semid, SEM_TRAP_MUTEX, 1);
                 break; 
             }
 
             if (sd->trap_count < K_TRAP) {
-                sd->trap_count++; na_trapie = true; s_op(semid, SEM_TRAP_MUTEX, 1);
+                sd->trap_count++; 
+                na_trapie = true; 
+                s_op(semid, SEM_TRAP_MUTEX, 1);
             } else {
                 if (is_vip) { 
-                    sd->trap_wait_vip++; s_op(semid, SEM_TRAP_MUTEX, 1); s_op(semid, SEM_TRAP_Q_VIP, -1); 
+                    sd->trap_wait_vip++; 
+                    s_op(semid, SEM_TRAP_MUTEX, 1); 
+                    s_op(semid, SEM_TRAP_Q_VIP, -1); 
                 } else { 
-                    sd->trap_wait_norm++; s_op(semid, SEM_TRAP_MUTEX, 1); s_op(semid, SEM_TRAP_Q_NORM, -1); 
+                    sd->trap_wait_norm++; 
+                    s_op(semid, SEM_TRAP_MUTEX, 1); 
+                    s_op(semid, SEM_TRAP_Q_NORM, -1); 
                 }
             }
         }
 
         if (na_trapie) {
-            custom_sleep(50);
             
             s_op(semid, SEM_TRAP_MUTEX, -1);
             
-            
             if (is_vip) {
-                logger(C_G, "P%d [VIP]: Siedzę w promie nr %d.", id, sd->prom_numer);
+                logger(C_G, "P%d [VIP]: W promie nr %d.", id, sd->prom_numer);
             } else {
-                logger(C_G, "P%d [STD]: Siedzę w promie nr %d.", id, sd->prom_numer);
+                logger(C_G, "P%d [STD]: W promie nr %d.", id, sd->prom_numer);
             }
 
             sd->trap_count--;
             
             if (sd->trap_wait_vip > 0) { 
-                sd->trap_wait_vip--; s_op(semid, SEM_TRAP_Q_VIP, 1); 
+                sd->trap_wait_vip--; 
+                s_op(semid, SEM_TRAP_Q_VIP, 1); 
             } else if (sd->trap_wait_norm > 0) { 
-                sd->trap_wait_norm--; s_op(semid, SEM_TRAP_Q_NORM, 1); 
+                sd->trap_wait_norm--; 
+                s_op(semid, SEM_TRAP_Q_NORM, 1); 
             }
             s_op(semid, SEM_TRAP_MUTEX, 1);
             w_srodku = true;

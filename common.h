@@ -19,6 +19,7 @@
 #include <signal.h>
 #include <string.h>
 #include <stdarg.h>
+#include <sys/resource.h>
 
 #define PROJECT_ID 'C'
 #define PATH_NAME "."
@@ -59,6 +60,8 @@ enum {
     SEM_FERRY_CAPACITY, 
     SEM_SYSTEM_MUTEX,
     SEM_FLOTA,
+    
+    SEM_TIMER_SIGNAL,
 
     SEM_COUNT
 };
@@ -97,13 +100,6 @@ typedef struct {
 
 } SharedData;
 
-static inline void custom_sleep(int ms) { 
-    struct timespec ts;
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (ms % 1000) * 1000000;
-    nanosleep(&ts, NULL);
-}
-
 static inline void logger(const char* color, const char* fmt, ...) {
     va_list args;
     char buffer[1024];
@@ -111,6 +107,7 @@ static inline void logger(const char* color, const char* fmt, ...) {
     vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
     printf("%s%s%s\n", color, buffer, C_0);
+    fflush(stdout);
     
     FILE *f = fopen(LOG_FILE, "a");
     if (f) { 
@@ -126,10 +123,54 @@ static inline void s_op(int semid, int n, int op) {
     sb.sem_flg = 0;
     
     if (semop(semid, &sb, 1) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
-            perror("Semop error"); 
-            exit(1);
+        if (errno == EINTR || errno == EIDRM) {
+            return;
         }
+        perror("semop failed");
+        fprintf(stderr, "sem_num=%d, sem_op=%d, errno=%d\n", n, op, errno);
+        exit(1);
     }
 }
+
+static inline int s_op_nowait(int semid, int n, int op) {
+    struct sembuf sb;
+    sb.sem_num = n;
+    sb.sem_op = op;
+    sb.sem_flg = IPC_NOWAIT;
+    
+    int ret = semop(semid, &sb, 1);
+    if (ret == -1) {
+        if (errno == EAGAIN) return -1;
+        if (errno == EINTR || errno == EIDRM) return -1;
+        perror("semop_nowait failed");
+        exit(1);
+    }
+    return 0;
+}
+
+static inline int validate_process_count(int count) {
+    if (count <= 0) {
+        fprintf(stderr, "BŁĄD: Liczba pasażerów musi być > 0\n");
+        return -1;
+    }
+    
+    if (count > 100000) {
+        fprintf(stderr, "BŁĄD: Liczba pasażerów nie może przekraczać 100000\n");
+        return -1;
+    }
+    
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NPROC, &rl) == 0) {
+        int max_safe = rl.rlim_cur - 50;
+        if (count > max_safe) {
+            fprintf(stderr, "BŁĄD: Limit procesów (%d) przekroczony. Max bezpieczna wartość: %d\n", 
+                    (int)rl.rlim_cur, max_safe);
+            fprintf(stderr, "Zwiększ limit: ulimit -u %d\n", count + 100);
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
 #endif

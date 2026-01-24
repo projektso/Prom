@@ -9,15 +9,35 @@ volatile bool force_departure = false;
 
 void handle_sigusr1(int sig) { 
     force_departure = true; 
+    logger(C_M, "[PROM] Otrzymano SYGNAŁ 1 (SIGUSR1)!");
 }
 
 int main() {
     signal(SIGUSR1, handle_sigusr1);
 
     key_t key = ftok(PATH_NAME, PROJECT_ID);
+    if (key == -1) {
+        perror("ftok failed in kapitan_promu");
+        exit(1);
+    }
+    
     int semid = semget(key, SEM_COUNT, 0600);
+    if (semid == -1) {
+        perror("semget failed in kapitan_promu");
+        exit(1);
+    }
+    
     int shmid = shmget(key, sizeof(SharedData), 0600);
+    if (shmid == -1) {
+        perror("shmget failed in kapitan_promu");
+        exit(1);
+    }
+    
     SharedData *sd = (SharedData*)shmat(shmid, NULL, 0);
+    if (sd == (void*)-1) {
+        perror("shmat failed in kapitan_promu");
+        exit(1);
+    }
 
     sd->pid_kapitan_promu = getpid();
     srand(time(NULL));
@@ -33,15 +53,20 @@ int main() {
     while (1) {
         s_op(semid, SEM_SYSTEM_MUTEX, -1);
         int pozostalo = sd->pasazerowie_w_systemie;
+        bool zamkniete = sd->blokada_odprawy;
         s_op(semid, SEM_SYSTEM_MUTEX, 1);
 
-        if (pozostalo <= 0) {
-            logger(C_B, "[KAPITAN] Brak pasażerów oczekujących. Zamykam dok.");
+        if (pozostalo <= 0 && zamkniete) {
+            logger(C_B, "[KAPITAN] Brak pasażerów i odprawa zamknięta. Zamykam dok.");
             break;
         }
 
         struct sembuf sb_fleet = {SEM_FLOTA, -1, 0};
-        if (semop(semid, &sb_fleet, 1) == -1) break;
+        if (semop(semid, &sb_fleet, 1) == -1) {
+            if (errno == EINTR || errno == EIDRM) break;
+            perror("semop SEM_FLOTA failed");
+            break;
+        }
 
         StatekInfo *statek = &flota[current_ship_idx];
 
@@ -51,70 +76,107 @@ int main() {
         sd->zaladunek_aktywny = true;
         force_departure = false;
         
-        semctl(semid, SEM_FERRY_CAPACITY, SETVAL, P_POJEMNOSC);
+        if (semctl(semid, SEM_FERRY_CAPACITY, SETVAL, P_POJEMNOSC) == -1) {
+            perror("semctl SEM_FERRY_CAPACITY failed");
+        }
+        
+        if (semctl(semid, SEM_TIMER_SIGNAL, SETVAL, 0) == -1) {
+            perror("semctl SEM_TIMER_SIGNAL failed");
+        }
 
-        logger(C_B, "[PROM %d] Podstawiony (Limit %d). Pozostało pasażerów: %d. Czekam T1=%ds.", 
+        logger(C_B, "[PROM %d] Podstawiony (Limit %d kg). Pozostało: %d. Czekam T1=%ds.", 
                statek->id, statek->limit_bagazu, pozostalo, T1_OCZEKIWANIE);
 
         static bool first_run = true;
         if (first_run) {
-            struct sembuf sb = {SEM_FERRY_READY, 1, 0};
-            semop(semid, &sb, 1);
+            s_op(semid, SEM_FERRY_READY, 1);
             first_run = false;
         }
 
-        int elapsed = 0;
-        while (elapsed < T1_OCZEKIWANIE) {
-            if (force_departure) {
-                logger(C_M, "[PROM %d] Sygnał 1! Wypływam.", statek->id);
+        struct timespec timeout;
+        timeout.tv_sec = T1_OCZEKIWANIE;
+        timeout.tv_nsec = 0;
+        
+        struct sembuf sb_timer = {SEM_TIMER_SIGNAL, -1, 0};
+        
+        bool time_up = false;
+        while (!time_up) {
+            int ret = semtimedop(semid, &sb_timer, 1, &timeout);
+            
+            if (ret == -1) {
+                if (errno == EAGAIN || errno == ETIMEDOUT) {
+                    logger(C_B, "[PROM %d] Timer T1 zakończony (timeout).", statek->id);
+                    time_up = true;
+                    break;
+                } else if (errno == EINTR) {
+                    if (force_departure) {
+                        logger(C_M, "[PROM %d] SYGNAŁ 1! Wypływam przed czasem.", statek->id);
+                        time_up = true;
+                        break;
+                    }
+                    continue;
+                } else if (errno == EIDRM) {
+                    break;
+                } else {
+                    perror("semtimedop failed");
+                    time_up = true;
+                    break;
+                }
+            } else {
+                logger(C_B, "[PROM %d] Ktoś obudził timer wcześnie.", statek->id);
+                time_up = true;
                 break;
             }
-            
+        }
+        
+        if (!time_up) {
             int wolne = semctl(semid, SEM_FERRY_CAPACITY, GETVAL);
             if (wolne == 0) {
-                logger(C_B, "[PROM %d] Komplet biletów sprzedany. Zamykam wejście.", statek->id);
-                break;
+                logger(C_B, "[PROM %d] Komplet! Zamykam wejście.", statek->id);
+            } else {
+                s_op(semid, SEM_SYSTEM_MUTEX, -1);
+                if (sd->pasazerowie_w_systemie <= 0 && wolne == P_POJEMNOSC) {
+                    s_op(semid, SEM_SYSTEM_MUTEX, 1);
+                    logger(C_B, "[PROM %d] Brak oczekujących. Wypływam.", statek->id);
+                } else {
+                    s_op(semid, SEM_SYSTEM_MUTEX, 1);
+                }
             }
-            
-            s_op(semid, SEM_SYSTEM_MUTEX, -1);
-            if (sd->pasazerowie_w_systemie <= 0 && wolne == P_POJEMNOSC) {
-                 s_op(semid, SEM_SYSTEM_MUTEX, 1); 
-                 break; 
-            }
-            s_op(semid, SEM_SYSTEM_MUTEX, 1);
-
-            sleep(1);
-            if (!force_departure) elapsed++;
         }
 
         s_op(semid, SEM_TRAP_MUTEX, -1);
         sd->zaladunek_aktywny = false; 
         s_op(semid, SEM_TRAP_MUTEX, 1);
 
-        // Czekanie na zejście z trapu
+        logger(C_B, "[PROM %d] Załadunek zamknięty. Czekam na zejście z trapu...", statek->id);
+
         while (1) {
             s_op(semid, SEM_TRAP_MUTEX, -1);
             int on_trap = sd->trap_count;
             s_op(semid, SEM_TRAP_MUTEX, 1);
             if (on_trap == 0) break;
-            custom_sleep(100);
         }
 
         sd->prom_w_porcie = false;
         int on_board = P_POJEMNOSC - semctl(semid, SEM_FERRY_CAPACITY, GETVAL);
 
         pid_t rejs_pid = fork();
-        
-        if (rejs_pid == 0) {
+        if (rejs_pid == -1) {
+            perror("fork rejs failed");
+            logger(C_R, "[PROM %d] BŁĄD fork rejsu!", statek->id);
+            s_op(semid, SEM_FLOTA, 1);
+        } else if (rejs_pid == 0) {
             int moje_id = statek->id; 
-            logger(C_B, "   >>> [PROM %d] ODPŁYWA (Liczba os: %d). Rejs %ds.", moje_id, on_board, Ti_REJS);
+            logger(C_B, "   >>> [PROM %d] ODPŁYWA (Pasażerów: %d). Rejs %ds.", 
+                   moje_id, on_board, Ti_REJS);
             
-            sleep(Ti_REJS); 
+            struct timespec ts_rejs = {Ti_REJS, 0};
+            struct sembuf sb_dummy = {SEM_TIMER_SIGNAL, -1, 0};
+            semtimedop(semid, &sb_dummy, 1, &ts_rejs);
             
             logger(C_B, "   <<< [PROM %d] WRÓCIŁ do bazy.", moje_id);
             
-            struct sembuf sb_back = {SEM_FLOTA, 1, 0};
-            semop(semid, &sb_back, 1);
+            s_op(semid, SEM_FLOTA, 1);
             
             exit(0);
         }
@@ -127,5 +189,6 @@ int main() {
     while (wait(NULL) > 0);
 
     logger(C_B, "[KAPITAN] Cała flota w bazie. Koniec warty.");
+    shmdt(sd);
     return 0;
 }
