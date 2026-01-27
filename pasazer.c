@@ -1,8 +1,14 @@
 #include "common.h"
 
-void zakoncz_podroz(int semid, SharedData *sd, const char* powod, int id) {
-    (void)powod;
-    (void)id; 
+volatile sig_atomic_t should_exit = 0;
+
+void handle_term(int sig) {
+    (void)sig;
+    should_exit = 1;
+}
+
+void zakoncz_podroz(int semid, SharedData *sd, int id) {
+    (void)id;
     
     s_op(semid, SEM_SYSTEM_MUTEX, -1);
     sd->pasazerowie_w_systemie--;
@@ -21,177 +27,172 @@ int main(int argc, char* argv[]) {
     }
     
     int id = atoi(argv[1]);
-    if (id <= 0) {
-        fprintf(stderr, "Invalid passenger ID: %s\n", argv[1]);
-        exit(1);
-    }
+    if (id <= 0) exit(1);
     
-    srand(time(NULL) ^ (getpid() << 16) ^ id);
+    struct sigaction sa;
+    sa.sa_handler = handle_term;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+    
+    unsigned int seed = time(NULL) ^ (getpid() << 16) ^ (id * 31);
+    srand(seed);
 
     key_t key = ftok(PATH_NAME, PROJECT_ID);
-    if (key == -1) {
-        perror("ftok failed in pasazer");
-        exit(1);
-    }
+    if (key == -1) exit(1);
     
     int semid = semget(key, SEM_COUNT, 0600);
-    if (semid == -1) {
-        perror("semget failed in pasazer");
-        exit(1);
-    }
+    if (semid == -1) exit(1);
     
     int shmid = shmget(key, sizeof(SharedData), 0600);
-    if (shmid == -1) {
-        perror("shmget failed in pasazer");
-        exit(1);
-    }
+    if (shmid == -1) exit(1);
     
     SharedData *sd = (SharedData*)shmat(shmid, NULL, 0);
-    if (sd == (void*)-1) {
-        perror("shmat failed in pasazer");
-        exit(1);
-    }
+    if (sd == (void*)-1) exit(1);
 
-    int waga = 15 + (rand() % 20); 
+    int waga = 15 + (rand() % 20);
+    int plec = (rand() % 2) + 1;
+    char c_plec = (plec == PLEC_M) ? 'M' : 'K';
 
     s_op(semid, SEM_BRAMKA, -1);
-
-    s_op(semid, SEM_SYSTEM_MUTEX, -1);
-    if (sd->blokada_odprawy) {
-        s_op(semid, SEM_SYSTEM_MUTEX, 1);
-        logger(C_R, "P%d: Port zamknięty! Wracam.", id);
-        zakoncz_podroz(semid, sd, "Blokada", id);
+    
+    if (should_exit || sd->blokada_odprawy) {
+        if (sd->blokada_odprawy) {
+            logger(C_R, "P%d [%c]: Port zamknięty! Wracam.", id, c_plec);
+        }
+        zakoncz_podroz(semid, sd, id);
     }
-    s_op(semid, SEM_SYSTEM_MUTEX, 1);
+
+    logger(C_W, "P%d [%c]: Wchodzę do portu (bagaż: %d kg).", id, c_plec, waga);
 
     bool odprawiony = false;
     int proby = 1;
 
-    while (!odprawiony) {
+    while (!odprawiony && !should_exit) {
         if (sd->blokada_odprawy) {
-            zakoncz_podroz(semid, sd, "Blokada", id);
+            zakoncz_podroz(semid, sd, id);
         }
 
-        s_op(semid, SEM_ODPRAWA, -1); 
+        s_op(semid, SEM_SYSTEM_MUTEX, -1);
+        sd->odprawa_czekajacy++;
+        s_op(semid, SEM_SYSTEM_MUTEX, 1);
+        
+        s_op(semid, SEM_ODPRAWA_QUEUE, -1);
+        
+        s_op(semid, SEM_ODPRAWA, -1);
+        
+        SLEEP_ODPRAWA();
         
         if (waga > Mp_LIMIT_ODPRAWY) {
-            s_op(semid, SEM_ODPRAWA, 1); 
             waga -= (2 + rand() % 5);
             if (waga < 0) waga = 0;
             proby++;
+            
+            s_op(semid, SEM_ODPRAWA, 1);
+            
+            s_op(semid, SEM_SYSTEM_MUTEX, -1);
+            if (sd->odprawa_czekajacy > 0) {
+                sd->odprawa_czekajacy--;
+                s_op(semid, SEM_ODPRAWA_QUEUE, 1);
+            }
+            s_op(semid, SEM_SYSTEM_MUTEX, 1);
+            
         } else {
-            logger(C_G, "P%d: Odprawiony (próba %d, bagaż %d kg).", id, proby, waga);
+            logger(C_G, "P%d [%c]: Odprawiony (próba %d, bagaż %d kg).", id, c_plec, proby, waga);
             odprawiony = true;
-            s_op(semid, SEM_ODPRAWA, 1); 
+            
+            s_op(semid, SEM_ODPRAWA, 1);
+            
+            s_op(semid, SEM_SYSTEM_MUTEX, -1);
+            if (sd->odprawa_czekajacy > 0) {
+                sd->odprawa_czekajacy--;
+                s_op(semid, SEM_ODPRAWA_QUEUE, 1);
+            }
+            s_op(semid, SEM_SYSTEM_MUTEX, 1);
         }
     }
-
-    int plec = (rand() % 2) + 1; 
     
-    char c_plec;
-    int sem_kolejka;
-    int sem_prio;
-
-    if (plec == PLEC_M) {
-        c_plec = 'M';
-        sem_kolejka = SEM_SEC_Q_M;
-        sem_prio = SEM_SEC_PRIO_M;
-    } else {
-        c_plec = 'K';
-        sem_kolejka = SEM_SEC_Q_K;
-        sem_prio = SEM_SEC_PRIO_K;
-    }
+    if (should_exit) zakoncz_podroz(semid, sd, id);
 
     bool na_kontroli = false;
     int bramka_nr = -1;
-    int frustracja = 0;
+    int przepuszczenia = 0;
 
-    while (!na_kontroli) {
-        s_op(semid, SEM_SEC_MUTEX, -1); 
+    while (!na_kontroli && !should_exit) {
+        s_op(semid, SEM_SEC_MUTEX, -1);
         
         for (int i = 0; i < LICZBA_STANOWISK_KONTROLI; i++) {
             if (sd->sec_liczba[i] == 0) {
                 sd->sec_liczba[i] = 1;
                 sd->sec_plec[i] = plec;
-                bramka_nr = i; 
-                na_kontroli = true; 
+                bramka_nr = i;
+                na_kontroli = true;
                 break;
             }
         }
         
         if (!na_kontroli) {
             for (int i = 0; i < LICZBA_STANOWISK_KONTROLI; i++) {
-                if (sd->sec_liczba[i] == 1 && sd->sec_plec[i] == plec) { 
+                if (sd->sec_liczba[i] == 1 && sd->sec_plec[i] == plec) {
                     sd->sec_liczba[i] = 2;
-                    bramka_nr = i; 
-                    na_kontroli = true; 
+                    bramka_nr = i;
+                    na_kontroli = true;
                     break;
                 }
             }
         }
 
         if (!na_kontroli) {
-            if (frustracja >= 3) {
-                if (plec == PLEC_M) sd->czekajacy_prio_m++; 
-                else sd->czekajacy_prio_k++;
-                s_op(semid, SEM_SEC_MUTEX, 1); 
-                s_op(semid, sem_prio, -1);
+            if (przepuszczenia < MAX_PRZEPUSZCZEN) {
+                przepuszczenia++;
+                logger(C_Y, "P%d [%c]: Przepuszczam kogoś (%d/%d).", 
+                       id, c_plec, przepuszczenia, MAX_PRZEPUSZCZEN);
             } else {
-                frustracja++;
-                if (plec == PLEC_M) sd->czekajacy_m++; 
-                else sd->czekajacy_k++;
-                s_op(semid, SEM_SEC_MUTEX, 1); 
-                s_op(semid, sem_kolejka, -1);
+                logger(C_R, "P%d [%c]: FRUSTRACJA! Muszę czekać.", id, c_plec);
             }
+            sd->sec_czekajacy++;
+            s_op(semid, SEM_SEC_MUTEX, 1);
+            s_op(semid, SEM_SEC_QUEUE, -1);
         } else {
-            s_op(semid, SEM_SEC_MUTEX, 1); 
+            s_op(semid, SEM_SEC_MUTEX, 1);
         }
     }
+    
+    if (should_exit) {
+        if (na_kontroli && bramka_nr >= 0) {
+            s_op(semid, SEM_SEC_MUTEX, -1);
+            sd->sec_liczba[bramka_nr]--;
+            if (sd->sec_liczba[bramka_nr] == 0) sd->sec_plec[bramka_nr] = PLEC_BRAK;
+            s_op(semid, SEM_SEC_MUTEX, 1);
+        }
+        zakoncz_podroz(semid, sd, id);
+    }
+
+    SLEEP_KONTROLA();
 
     s_op(semid, SEM_SEC_MUTEX, -1);
     sd->sec_liczba[bramka_nr]--;
-    if (sd->sec_liczba[bramka_nr] == 0) sd->sec_plec[bramka_nr] = PLEC_BRAK;
-    
-    int kogo_budzic = 0; 
-    bool budzic_prio = false;
-    bool pasuje_M = (sd->sec_liczba[bramka_nr] == 0 || sd->sec_plec[bramka_nr] == PLEC_M);
-    bool pasuje_K = (sd->sec_liczba[bramka_nr] == 0 || sd->sec_plec[bramka_nr] == PLEC_K);
-
-    if (pasuje_M && sd->czekajacy_prio_m > 0) { 
-        kogo_budzic = PLEC_M; budzic_prio = true; 
-    } else if (pasuje_K && sd->czekajacy_prio_k > 0) { 
-        kogo_budzic = PLEC_K; budzic_prio = true; 
-    } else if (pasuje_M && sd->czekajacy_m > 0) { 
-        kogo_budzic = PLEC_M; 
-    } else if (pasuje_K && sd->czekajacy_k > 0) { 
-        kogo_budzic = PLEC_K; 
+    if (sd->sec_liczba[bramka_nr] == 0) {
+        sd->sec_plec[bramka_nr] = PLEC_BRAK;
     }
     
-    if (kogo_budzic == PLEC_M) {
-        if (budzic_prio) { 
-            s_op(semid, SEM_SEC_PRIO_M, 1); 
-            sd->czekajacy_prio_m--; 
-        } else { 
-            s_op(semid, SEM_SEC_Q_M, 1);
-            sd->czekajacy_m--;
-        }
-    } else if (kogo_budzic == PLEC_K) {
-        if (budzic_prio) { 
-            s_op(semid, SEM_SEC_PRIO_K, 1);
-            sd->czekajacy_prio_k--;
-        } else { 
-            s_op(semid, SEM_SEC_Q_K, 1);
-            sd->czekajacy_k--;
-        }
+    if (sd->sec_czekajacy > 0) {
+        sd->sec_czekajacy--;
+        s_op(semid, SEM_SEC_QUEUE, 1);
     }
     s_op(semid, SEM_SEC_MUTEX, 1);
 
     bool is_vip = (rand() % 100) < 30;
-    logger(C_C, "P%d [%c]: Przeszedł kontrolę (Bramka %d, VIP: %s).", 
-           id, c_plec, bramka_nr, is_vip ? "TAK" : "NIE");
+    
+    logger(C_C, "P%d [%c]: Przeszedł kontrolę (Bramka %d, %s).", 
+           id, c_plec, bramka_nr, is_vip ? "VIP" : "STD");
 
+    int moja_kolejka;
+    
     if (is_vip) {
-        logger(C_M, "P%d [VIP]: Omijam poczekalnię, idę prosto do trapu!", id);
+        logger(C_M, "P%d [VIP]: Idę do kolejki VIP.", id);
+        moja_kolejka = 1;
         
         s_op(semid, SEM_TRAP_MUTEX, -1);
         sd->trap_wait_vip++;
@@ -200,6 +201,7 @@ int main(int argc, char* argv[]) {
         s_op(semid, SEM_TRAP_Q_VIP, -1);
     } else {
         s_op(semid, SEM_POCZEKALNIA, -1);
+        moja_kolejka = 0;
         
         s_op(semid, SEM_TRAP_MUTEX, -1);
         sd->trap_wait_norm++;
@@ -209,113 +211,184 @@ int main(int argc, char* argv[]) {
     }
     
     bool w_srodku = false;
-    int moja_pozycja_na_trapie = -1;
+    bool na_trapie = false;
     
-    while (!w_srodku) {
+    while (!w_srodku && !should_exit) {
         s_op(semid, SEM_TRAP_MUTEX, -1);
         
         if (!sd->zaladunek_aktywny || !sd->prom_w_porcie) {
-            s_op(semid, SEM_TRAP_MUTEX, 1); 
-            
-            if (moja_pozycja_na_trapie >= 0) {
-                s_op(semid, SEM_TRAP_MUTEX, -1);
+            if (na_trapie) {
+                logger(C_Y, "P%d: Prom odpłynął! Schodzę z trapu.", id);
                 sd->trap_count--;
-                moja_pozycja_na_trapie = -1;
+                na_trapie = false;
+                s_op(semid, SEM_TRAP_ENTER, 1);
+                
+                if (sd->trap_count == 0) {
+                    s_op_nowait(semid, SEM_TRAP_EMPTY, 1);
+                }
+                
+                moja_kolejka = 2;
+            }
+            
+            if (moja_kolejka == 2) {
                 sd->trap_wait_return++;
                 s_op(semid, SEM_TRAP_MUTEX, 1);
                 s_op(semid, SEM_TRAP_Q_RETURN, -1);
-            }
-            continue;
-        }
-        
-        if (waga > sd->limit_bagazu_aktualny) {
-            s_op(semid, SEM_TRAP_MUTEX, 1); 
-            
-            if (moja_pozycja_na_trapie >= 0) {
-                s_op(semid, SEM_TRAP_MUTEX, -1);
-                sd->trap_count--;
-                moja_pozycja_na_trapie = -1;
-                sd->trap_wait_return++;
+            } else if (moja_kolejka == 1) {
+                sd->trap_wait_vip++;
                 s_op(semid, SEM_TRAP_MUTEX, 1);
-                s_op(semid, SEM_TRAP_Q_RETURN, -1);
-            }
-            continue;
-        }
-
-        if (s_op_nowait(semid, SEM_FERRY_CAPACITY, -1) == -1) {
-            s_op(semid, SEM_TRAP_MUTEX, 1);
-            
-            if (moja_pozycja_na_trapie >= 0) {
-                s_op(semid, SEM_TRAP_MUTEX, -1);
-                logger(C_Y, "P%d: Prom pełny! Schodzę z trapu (pozycja %d) i wracam do kolejki.", 
-                       id, moja_pozycja_na_trapie);
-                sd->trap_count--;
-                moja_pozycja_na_trapie = -1;
-                sd->trap_wait_return++;
-                s_op(semid, SEM_TRAP_MUTEX, 1);
-                s_op(semid, SEM_TRAP_Q_RETURN, -1);
-            }
-            continue;
-        }
-
-        bool na_trapie = false;
-        
-        if (!sd->zaladunek_aktywny) {
-            s_op(semid, SEM_FERRY_CAPACITY, 1); 
-            s_op(semid, SEM_TRAP_MUTEX, 1);
-            
-            if (moja_pozycja_na_trapie >= 0) {
-                s_op(semid, SEM_TRAP_MUTEX, -1);
-                sd->trap_count--;
-                moja_pozycja_na_trapie = -1;
-                sd->trap_wait_return++;
-                s_op(semid, SEM_TRAP_MUTEX, 1);
-                s_op(semid, SEM_TRAP_Q_RETURN, -1);
-            }
-            continue;
-        }
-
-        if (sd->trap_count < K_TRAP) {
-            sd->trap_count++;
-            moja_pozycja_na_trapie = sd->trap_count;
-            na_trapie = true; 
-        } else {
-            s_op(semid, SEM_FERRY_CAPACITY, 1);
-            s_op(semid, SEM_TRAP_MUTEX, 1);
-            
-            if (is_vip) {
                 s_op(semid, SEM_TRAP_Q_VIP, -1);
             } else {
+                sd->trap_wait_norm++;
+                s_op(semid, SEM_TRAP_MUTEX, 1);
+                s_op(semid, SEM_TRAP_Q_NORM, -1);
+            }
+            continue;
+        }
+        
+        int aktualny_limit = sd->limit_bagazu_aktualny;
+        int numer_promu = sd->prom_numer;
+        
+        if (waga > aktualny_limit) {
+            if (na_trapie) {
+                logger(C_Y, "P%d: Bagaż %d kg > limit %d kg. Schodzę z trapu.", 
+                       id, waga, aktualny_limit);
+                sd->trap_count--;
+                na_trapie = false;
+                s_op(semid, SEM_TRAP_ENTER, 1);
+                
+                if (sd->trap_count == 0) {
+                    s_op_nowait(semid, SEM_TRAP_EMPTY, 1);
+                }
+                moja_kolejka = 2;
+            } else {
+                logger(C_Y, "P%d: Bagaż %d kg > limit %d kg. Czekam na inny prom.", 
+                       id, waga, aktualny_limit);
+            }
+            
+            if (moja_kolejka == 2) {
+                sd->trap_wait_return++;
+                s_op(semid, SEM_TRAP_MUTEX, 1);
+                s_op(semid, SEM_TRAP_Q_RETURN, -1);
+            } else if (moja_kolejka == 1) {
+                sd->trap_wait_vip++;
+                s_op(semid, SEM_TRAP_MUTEX, 1);
+                s_op(semid, SEM_TRAP_Q_VIP, -1);
+            } else {
+                sd->trap_wait_norm++;
+                s_op(semid, SEM_TRAP_MUTEX, 1);
                 s_op(semid, SEM_TRAP_Q_NORM, -1);
             }
             continue;
         }
 
-        if (na_trapie) {
-            if (is_vip) {
-                logger(C_G, "P%d [VIP]: W promie nr %d (ominąłem kolejkę!).", id, sd->prom_numer);
-            } else {
-                logger(C_G, "P%d [STD]: W promie nr %d.", id, sd->prom_numer);
+        if (!na_trapie) {
+            if (s_op_nowait(semid, SEM_TRAP_ENTER, -1) == -1) {
+                if (moja_kolejka == 2) {
+                    sd->trap_wait_return++;
+                    s_op(semid, SEM_TRAP_MUTEX, 1);
+                    s_op(semid, SEM_TRAP_Q_RETURN, -1);
+                } else if (moja_kolejka == 1) {
+                    sd->trap_wait_vip++;
+                    s_op(semid, SEM_TRAP_MUTEX, 1);
+                    s_op(semid, SEM_TRAP_Q_VIP, -1);
+                } else {
+                    sd->trap_wait_norm++;
+                    s_op(semid, SEM_TRAP_MUTEX, 1);
+                    s_op(semid, SEM_TRAP_Q_NORM, -1);
+                }
+                continue;
             }
-
-            sd->trap_count--;
-            moja_pozycja_na_trapie = -1;
+            
+            sd->trap_count++;
+            na_trapie = true;
+            
+            logger(C_C, "P%d [%s]: Wchodzę na trap (pozycja %d/%d).", 
+                   id, is_vip ? "VIP" : "STD", sd->trap_count, K_TRAP);
+            
+            s_op(semid, SEM_TRAP_MUTEX, 1);
+            
+            SLEEP_TRAP_WALK();
+            
+            continue;
+        }
+        
+        if (s_op_nowait(semid, SEM_FERRY_CAPACITY, -1) == -1) {
+            logger(C_Y, "P%d: Prom pełny! Czekam na trapie.", id);
             
             if (sd->trap_wait_return > 0) {
                 s_op(semid, SEM_TRAP_Q_RETURN, 1);
                 sd->trap_wait_return--;
-            } else if (sd->trap_wait_vip > 0) { 
+            } else if (sd->trap_wait_vip > 0) {
                 s_op(semid, SEM_TRAP_Q_VIP, 1);
-                sd->trap_wait_vip--; 
-            } else if (sd->trap_wait_norm > 0) { 
+                sd->trap_wait_vip--;
+            } else if (sd->trap_wait_norm > 0) {
                 s_op(semid, SEM_TRAP_Q_NORM, 1);
-                sd->trap_wait_norm--; 
+                sd->trap_wait_norm--;
             }
+            
+            sd->trap_count--;
+            na_trapie = false;
+            s_op(semid, SEM_TRAP_ENTER, 1);
+            
+            if (sd->trap_count == 0) {
+                s_op_nowait(semid, SEM_TRAP_EMPTY, 1);
+            }
+            
+            moja_kolejka = 2;
+            sd->trap_wait_return++;
             s_op(semid, SEM_TRAP_MUTEX, 1);
-            w_srodku = true;
+            s_op(semid, SEM_TRAP_Q_RETURN, -1);
+            continue;
         }
+        
+        if (!sd->zaladunek_aktywny || sd->prom_numer != numer_promu) {
+            s_op(semid, SEM_FERRY_CAPACITY, 1);
+            
+            logger(C_Y, "P%d: Prom %d odpłynął! Schodzę z trapu.", id, numer_promu);
+            sd->trap_count--;
+            na_trapie = false;
+            s_op(semid, SEM_TRAP_ENTER, 1);
+            
+            if (sd->trap_count == 0) {
+                s_op_nowait(semid, SEM_TRAP_EMPTY, 1);
+            }
+            
+            moja_kolejka = 2;
+            sd->trap_wait_return++;
+            s_op(semid, SEM_TRAP_MUTEX, 1);
+            s_op(semid, SEM_TRAP_Q_RETURN, -1);
+            continue;
+        }
+        
+        SLEEP_BOARDING();
+        
+        logger(C_G, "P%d [%s]: Wsiadłem do promu nr %d.", 
+               id, is_vip ? "VIP" : "STD", numer_promu);
+        
+        sd->trap_count--;
+        na_trapie = false;
+        s_op(semid, SEM_TRAP_ENTER, 1);
+        
+        if (sd->trap_count == 0) {
+            s_op_nowait(semid, SEM_TRAP_EMPTY, 1);
+        }
+        
+        if (sd->trap_wait_return > 0) {
+            s_op(semid, SEM_TRAP_Q_RETURN, 1);
+            sd->trap_wait_return--;
+        } else if (sd->trap_wait_vip > 0) {
+            s_op(semid, SEM_TRAP_Q_VIP, 1);
+            sd->trap_wait_vip--;
+        } else if (sd->trap_wait_norm > 0) {
+            s_op(semid, SEM_TRAP_Q_NORM, 1);
+            sd->trap_wait_norm--;
+        }
+        
+        s_op(semid, SEM_TRAP_MUTEX, 1);
+        w_srodku = true;
     }
 
-    zakoncz_podroz(semid, sd, "Sukces", id);
+    zakoncz_podroz(semid, sd, id);
     return 0;
 }
