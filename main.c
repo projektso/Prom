@@ -100,6 +100,7 @@ int main(int argc, char* argv[]) {
     semctl(semid, SEM_TRAP_MUTEX, SETVAL, 1);
     semctl(semid, SEM_TRAP_ENTER, SETVAL, K_TRAP);
     semctl(semid, SEM_TRAP_Q_RETURN, SETVAL, 0);
+    semctl(semid, SEM_TRAP_Q_HEAVY, SETVAL, 0);
     semctl(semid, SEM_TRAP_Q_VIP, SETVAL, 0);
     semctl(semid, SEM_TRAP_Q_NORM, SETVAL, 0);
     
@@ -159,8 +160,6 @@ int main(int argc, char* argv[]) {
         pid_pasazerowie[liczba_utworzonych++] = p;
     }
 
-    logger(C_G, "[MAIN] Utworzono %d pasażerów.", liczba_utworzonych);
-
     int completed = 0;
     while (completed < liczba_utworzonych) {
         int status;
@@ -181,7 +180,6 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    logger(C_G, "[MAIN] Wszyscy pasażerowie zakończyli (%d/%d).", completed, liczba_utworzonych);
     sd->wszyscy_obsluzeni = true;
 
     if (pid_prom > 0) { waitpid(pid_prom, NULL, 0); pid_prom = -1; }

@@ -48,7 +48,7 @@
 
 #if VISUAL_SLEEP_ENABLED
     #define SLEEP_ODPRAWA()      usleep(100000)
-    #define SLEEP_KONTROLA()     usleep(150000)
+    #define SLEEP_KONTROLA()     usleep(150000) 
     #define SLEEP_TRAP_WALK()    usleep(200000)
     #define SLEEP_BOARDING()     usleep(100000)
 #else
@@ -72,6 +72,7 @@ enum {
     SEM_TRAP_MUTEX,
     SEM_TRAP_ENTER,
     SEM_TRAP_Q_RETURN,
+    SEM_TRAP_Q_HEAVY,
     SEM_TRAP_Q_VIP,
     SEM_TRAP_Q_NORM,
     
@@ -117,6 +118,7 @@ typedef struct {
 
     volatile int trap_count;
     int trap_wait_return;
+    int trap_wait_heavy;
     int trap_wait_vip;
     int trap_wait_norm;
 

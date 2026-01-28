@@ -28,7 +28,7 @@ int main() {
 
     sd->pid_kapitan_portu = getpid();
 
-    logger(C_W, "[KAPITAN PORTU] Otwieram port!");
+    logger(C_C, "[KAPITAN PORTU] Otwieram port!");
     
     for (int i = 0; i < 1000; i++) {
         s_op(semid, SEM_BRAMKA, 1);
@@ -43,7 +43,7 @@ int main() {
     }
     s_op(semid, SEM_SYSTEM_MUTEX, 1);
 
-    logger(C_W, "[KAPITAN PORTU] Pierwszy prom za %d sekund...", T_START_DELAY);
+    logger(C_C, "[KAPITAN PORTU] Pierwszy prom za %d sekund...", T_START_DELAY);
     
     time_t start_time, current_time;
     time(&start_time);
@@ -52,11 +52,11 @@ int main() {
         if (current_time - start_time >= T_START_DELAY) break;
     }
     
-    logger(C_W, "[KAPITAN PORTU] Wysyłam sygnał - można podstawić prom!");
+    logger(C_C, "[KAPITAN PORTU] Wysyłam sygnał - można podstawić prom!");
     sd->pierwszy_prom_podstawiony = true;
     s_op(semid, SEM_FERRY_READY, 1);
 
-    logger(C_W, "[KAPITAN PORTU] Monitoruję port...");
+    logger(C_C, "[KAPITAN PORTU] Monitoruję port...");
     
     while (!received_signal2) {
         s_op(semid, SEM_SYSTEM_MUTEX, -1);
@@ -64,7 +64,7 @@ int main() {
         s_op(semid, SEM_SYSTEM_MUTEX, 1);
         
         if (pozostalo <= 0) {
-            logger(C_W, "[KAPITAN PORTU] Wszyscy obsłużeni. Zamykam.");
+            logger(C_C, "[KAPITAN PORTU] Brak pasażerów. Zamykam dok.");
             s_op(semid, SEM_SYSTEM_MUTEX, -1);
             sd->blokada_odprawy = true;
             s_op(semid, SEM_SYSTEM_MUTEX, 1);
@@ -86,13 +86,20 @@ int main() {
         bool koniec = sd->wszyscy_obsluzeni;
         s_op(semid, SEM_SYSTEM_MUTEX, 1);
         
-        if (koniec) {
-            logger(C_W, "[KAPITAN PORTU] Koniec pracy.");
-            break;
-        }
+        if (koniec) break;
         
         if (s_op_timed(semid, SEM_SYSTEM_MUTEX, 0, 2) == -2) break;
     }
+
+    logger(C_C, "[KAPITAN PORTU] Czekam na powrót floty...");
+    
+    while (1) {
+        int flota_val = semctl(semid, SEM_FLOTA, GETVAL);
+        if (flota_val >= N_FLOTA) break;
+        usleep(500000);
+    }
+    
+    logger(C_C, "[KAPITAN PORTU] Cała flota w bazie. Koniec warty.");
 
     shmdt(sd);
     return 0;

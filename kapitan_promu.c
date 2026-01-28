@@ -53,7 +53,6 @@ int main() {
         s_op(semid, SEM_SYSTEM_MUTEX, 1);
 
         if (pozostalo <= 0 && zamkniete) {
-            logger(C_B, "[KAPITAN PROMU] Brak pasażerów. Zamykam dok.");
             break;
         }
 
@@ -73,6 +72,7 @@ int main() {
         sd->trap_count = 0;
         
         int czekajacy_return = sd->trap_wait_return;
+        int czekajacy_heavy = sd->trap_wait_heavy;
         int czekajacy_vip = sd->trap_wait_vip;
         int czekajacy_norm = sd->trap_wait_norm;
         s_op(semid, SEM_TRAP_MUTEX, 1);
@@ -86,35 +86,27 @@ int main() {
 
         logger(C_B, "[PROM %d] Podstawiony (Limit %d kg). Pozostało: %d pasażerów.", 
                statek->id, statek->limit_bagazu, pozostalo);
-        logger(C_B, "[PROM %d] Czekający: %d (ret:%d, vip:%d, norm:%d)", 
-               statek->id, czekajacy_return + czekajacy_vip + czekajacy_norm,
-               czekajacy_return, czekajacy_vip, czekajacy_norm);
+        logger(C_B, "[PROM %d] Czekający: %d (ret:%d, heavy:%d, vip:%d, norm:%d). Załadunek: %ds...", 
+               statek->id, czekajacy_return + czekajacy_heavy + czekajacy_vip + czekajacy_norm,
+               czekajacy_return, czekajacy_heavy, czekajacy_vip, czekajacy_norm, T1_OCZEKIWANIE);
         
         s_op(semid, SEM_TRAP_MUTEX, -1);
         
-        int obudzono = 0;
-        int ile_budzic = K_TRAP + P_POJEMNOSC;
-        
-        while (sd->trap_wait_return > 0 && obudzono < ile_budzic) {
+        if (sd->trap_wait_return > 0) {
             s_op(semid, SEM_TRAP_Q_RETURN, 1);
             sd->trap_wait_return--;
-            obudzono++;
-        }
-        while (sd->trap_wait_vip > 0 && obudzono < ile_budzic) {
+        } else if (sd->trap_wait_heavy > 0) {
+            s_op(semid, SEM_TRAP_Q_HEAVY, 1);
+            sd->trap_wait_heavy--;
+        } else if (sd->trap_wait_vip > 0) {
             s_op(semid, SEM_TRAP_Q_VIP, 1);
             sd->trap_wait_vip--;
-            obudzono++;
-        }
-        while (sd->trap_wait_norm > 0 && obudzono < ile_budzic) {
+        } else if (sd->trap_wait_norm > 0) {
             s_op(semid, SEM_TRAP_Q_NORM, 1);
             sd->trap_wait_norm--;
-            obudzono++;
         }
         
         s_op(semid, SEM_TRAP_MUTEX, 1);
-        
-        logger(C_B, "[PROM %d] Obudzono %d pasażerów. Załadunek: %ds...", 
-               statek->id, obudzono, T1_OCZEKIWANIE);
 
         struct timespec timeout = {T1_OCZEKIWANIE, 0};
         struct sembuf sb_timer = {SEM_TIMER_SIGNAL, -1, 0};
@@ -150,24 +142,7 @@ int main() {
 
         s_op(semid, SEM_TRAP_MUTEX, -1);
         sd->zaladunek_aktywny = false;
-        
-        int budzonych = 0;
-        while (sd->trap_wait_return > 0) {
-            s_op(semid, SEM_TRAP_Q_RETURN, 1);
-            sd->trap_wait_return--;
-            budzonych++;
-        }
-        while (sd->trap_wait_vip > 0) {
-            s_op(semid, SEM_TRAP_Q_VIP, 1);
-            sd->trap_wait_vip--;
-            budzonych++;
-        }
-        while (sd->trap_wait_norm > 0) {
-            s_op(semid, SEM_TRAP_Q_NORM, 1);
-            sd->trap_wait_norm--;
-            budzonych++;
-        }
-        
+                
         int na_trapie = sd->trap_count;
         s_op(semid, SEM_TRAP_MUTEX, 1);
 
@@ -189,6 +164,13 @@ int main() {
 
         sd->prom_w_porcie = false;
         int final_passengers = P_POJEMNOSC - semctl(semid, SEM_FERRY_CAPACITY, GETVAL);
+
+        if (final_passengers == 0) {
+            logger(C_Y, "[PROM %d] Brak pasażerów - prom wraca do kolejki.", statek->id);
+            s_op(semid, SEM_FLOTA, 1);
+            current_ship_idx = (current_ship_idx + 1) % N_FLOTA;
+            continue;
+        }
 
         pid_t rejs_pid = fork();
         if (rejs_pid == -1) {
@@ -213,9 +195,7 @@ int main() {
     }
 
 cleanup:
-    logger(C_B, "[KAPITAN PROMU] Czekam na flotę...");
     while (wait(NULL) > 0);
-    logger(C_B, "[KAPITAN PROMU] Koniec warty.");
     shmdt(sd);
     return 0;
 }
