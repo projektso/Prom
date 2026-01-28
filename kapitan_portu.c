@@ -93,11 +93,12 @@ int main() {
 
     logger(C_C, "[KAPITAN PORTU] Czekam na powrót floty...");
     
-    while (1) {
-        int flota_val = semctl(semid, SEM_FLOTA, GETVAL);
-        if (flota_val >= N_FLOTA) break;
-        usleep(500000);
-    }
+    for (int i = 0; i < N_FLOTA; i++) {
+         s_op(semid, SEM_FLOTA, -1);
+     }
+     for (int i = 0; i < N_FLOTA; i++) {
+         s_op(semid, SEM_FLOTA, 1);
+     }
     
     logger(C_C, "[KAPITAN PORTU] Cała flota w bazie. Koniec warty.");
 

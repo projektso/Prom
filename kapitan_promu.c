@@ -39,6 +39,17 @@ int main() {
         flota[i].id = i + 1;
         flota[i].limit_bagazu = 15 + (rand() % 15);
     }
+    
+    bool jest_wystarczajacy = false;
+    for (int i = 0; i < N_FLOTA; i++) {
+        if (flota[i].limit_bagazu >= Mp_LIMIT_ODPRAWY) {
+            jest_wystarczajacy = true;
+            break;
+        }
+    }
+    if (!jest_wystarczajacy) {
+        flota[rand() % N_FLOTA].limit_bagazu = Mp_LIMIT_ODPRAWY;
+    }
 
     int current_ship_idx = 0;
 

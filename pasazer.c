@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
             }
             s_op(semid, SEM_TRAP_MUTEX, 1);
             
-            usleep(50000);
+            s_op_timed(semid, SEM_TIMER_SIGNAL, -1, 1);
             continue;
         }
         
