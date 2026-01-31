@@ -1,18 +1,30 @@
 #include "common.h"
 
-volatile sig_atomic_t received_signal2 = 0;
+volatile sig_atomic_t send_signal1 = 0;
+volatile sig_atomic_t send_signal2 = 0;
+
+void handle_sigusr1(int sig) {
+    (void)sig;
+    send_signal1 = 1;
+}
 
 void handle_sigusr2(int sig) {
     (void)sig;
-    received_signal2 = 1;
+    send_signal2 = 1;
 }
 
 int main() {
-    struct sigaction sa;
-    sa.sa_handler = handle_sigusr2;
-    sa.sa_flags = 0;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGUSR2, &sa, NULL);
+    struct sigaction sa1, sa2;
+    
+    sa1.sa_handler = handle_sigusr1;
+    sa1.sa_flags = 0;
+    sigemptyset(&sa1.sa_mask);
+    sigaction(SIGUSR1, &sa1, NULL);
+    
+    sa2.sa_handler = handle_sigusr2;
+    sa2.sa_flags = 0;
+    sigemptyset(&sa2.sa_mask);
+    sigaction(SIGUSR2, &sa2, NULL);
     
     key_t key = ftok(PATH_NAME, PROJECT_ID);
     if (key == -1) { perror("ftok"); exit(1); }
@@ -57,8 +69,28 @@ int main() {
     s_op(semid, SEM_FERRY_READY, 1);
 
     logger(C_C, "[KAPITAN PORTU] Monitoruję port...");
+    logger(C_C, "[KAPITAN PORTU] Wyślij SIGUSR1 (kill -USR1 %d) aby prom wypłynął wcześniej.", getpid());
+    logger(C_C, "[KAPITAN PORTU] Wyślij SIGUSR2 (kill -USR2 %d) aby zamknąć odprawę.", getpid());
     
-    while (!received_signal2) {
+    while (1) {
+        if (send_signal1) {
+            send_signal1 = 0;
+            if (sd->pid_kapitan_promu > 0) {
+                logger(C_M, "[KAPITAN PORTU] SYGNAŁ 1! Wysyłam do kapitana promu - wcześniejszy wypływ.");
+                kill(sd->pid_kapitan_promu, SIGUSR1);
+            }
+        }
+        
+        if (send_signal2) {
+            send_signal2 = 0;
+            logger(C_R, "[KAPITAN PORTU] SYGNAŁ 2! Zamykam odprawę - nowi pasażerowie nie mogą wejść.");
+            
+            s_op(semid, SEM_SYSTEM_MUTEX, -1);
+            sd->blokada_odprawy = true;
+            s_op(semid, SEM_SYSTEM_MUTEX, 1);
+            
+        }
+        
         s_op(semid, SEM_SYSTEM_MUTEX, -1);
         int pozostalo = sd->pasazerowie_w_systemie;
         s_op(semid, SEM_SYSTEM_MUTEX, 1);
@@ -74,13 +106,6 @@ int main() {
         s_op_timed(semid, SEM_SYSTEM_MUTEX, 0, 1);
     }
 
-    if (received_signal2) {
-        s_op(semid, SEM_SYSTEM_MUTEX, -1);
-        sd->blokada_odprawy = true;
-        s_op(semid, SEM_SYSTEM_MUTEX, 1);
-        logger(C_R, "[KAPITAN PORTU] SYGNAŁ 2! Odprawa ZAMKNIĘTA.");
-    }
-
     while (1) {
         s_op(semid, SEM_SYSTEM_MUTEX, -1);
         bool koniec = sd->wszyscy_obsluzeni;
@@ -94,11 +119,11 @@ int main() {
     logger(C_C, "[KAPITAN PORTU] Czekam na powrót floty...");
     
     for (int i = 0; i < N_FLOTA; i++) {
-         s_op(semid, SEM_FLOTA, -1);
-     }
-     for (int i = 0; i < N_FLOTA; i++) {
-         s_op(semid, SEM_FLOTA, 1);
-     }
+        s_op(semid, SEM_FLOTA, -1);
+    }
+    for (int i = 0; i < N_FLOTA; i++) {
+        s_op(semid, SEM_FLOTA, 1);
+    }
     
     logger(C_C, "[KAPITAN PORTU] Cała flota w bazie. Koniec warty.");
 

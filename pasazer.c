@@ -1,9 +1,16 @@
 #include "common.h"
 
 volatile sig_atomic_t should_exit = 0;
+volatile sig_atomic_t received_signal2 = 0;
 
 void handle_term(int sig) {
     (void)sig;
+    should_exit = 1;
+}
+
+void handle_sigusr2(int sig) {
+    (void)sig;
+    received_signal2 = 1;
     should_exit = 1;
 }
 
@@ -26,12 +33,17 @@ int main(int argc, char* argv[]) {
     int id = atoi(argv[1]);
     if (id <= 0) exit(1);
     
-    struct sigaction sa;
+    struct sigaction sa, sa2;
     sa.sa_handler = handle_term;
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
+    
+    sa2.sa_handler = handle_sigusr2;
+    sa2.sa_flags = 0;
+    sigemptyset(&sa2.sa_mask);
+    sigaction(SIGUSR2, &sa2, NULL);
     
     unsigned int seed = time(NULL) ^ (getpid() << 16) ^ (id * 31);
     srand(seed);
@@ -73,6 +85,17 @@ int main(int argc, char* argv[]) {
         
         s_op(semid, SEM_ODPRAWA_QUEUE, -1);
         s_op(semid, SEM_ODPRAWA, -1);
+        
+        if (sd->blokada_odprawy) {
+            s_op(semid, SEM_ODPRAWA, 1);
+            s_op(semid, SEM_SYSTEM_MUTEX, -1);
+            if (sd->odprawa_czekajacy > 0) {
+                sd->odprawa_czekajacy--;
+                s_op(semid, SEM_ODPRAWA_QUEUE, 1);
+            }
+            s_op(semid, SEM_SYSTEM_MUTEX, 1);
+            zakoncz_podroz(semid, sd, id);
+        }
         
         SLEEP_ODPRAWA();
         
@@ -211,7 +234,7 @@ int main(int argc, char* argv[]) {
         
         if (!sd->zaladunek_aktywny || !sd->prom_w_porcie) {
             if (na_trapie) {
-                logger(C_Y, "P%d: Prom odpłynął! Schodzę z trapu.", id);
+                logger(C_Y, "P%d: Prom odpływa! Schodzę z trapu.", id);
                 
                 moja_kolejka = 2;
                 sd->trap_wait_return++;

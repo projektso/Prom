@@ -48,7 +48,7 @@
 
 #if VISUAL_SLEEP_ENABLED
     #define SLEEP_ODPRAWA()      usleep(100000)
-    #define SLEEP_KONTROLA()     usleep(150000) 
+    #define SLEEP_KONTROLA()     usleep(150000)
     #define SLEEP_TRAP_WALK()    usleep(200000)
     #define SLEEP_BOARDING()     usleep(100000)
 #else
@@ -121,6 +121,9 @@ typedef struct {
     int trap_wait_heavy;
     int trap_wait_vip;
     int trap_wait_norm;
+
+    pid_t pidy_pasazerow[100000];
+    int liczba_pasazerow_pidy;
 
 } SharedData;
 

@@ -158,6 +158,9 @@ int main(int argc, char* argv[]) {
         }
         
         pid_pasazerowie[liczba_utworzonych++] = p;
+        
+        sd->pidy_pasazerow[liczba_utworzonych - 1] = p;
+        sd->liczba_pasazerow_pidy = liczba_utworzonych;
     }
 
     int completed = 0;
