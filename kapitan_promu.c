@@ -1,5 +1,3 @@
-//kapitan_promu.c
-
 #include "common.h"
 
 //STRUKTURA INFORMACJI O STATKU
@@ -17,6 +15,7 @@ void handle_sigusr1(int sig) {
 }
 
 int main() {
+    int statki_na_morzu=0;
     //REJESTRACJA HANDLERA SYGNAŁU 
     struct sigaction sa;
     sa.sa_handler = handle_sigusr1;
@@ -69,15 +68,44 @@ int main() {
 
     //GŁÓWNA PĘTLA OBSŁUGI PROMÓW
     while (1) {
-        while (waitpid(-1, NULL, WNOHANG) > 0);
+        //Sprzątanie zombie
+        int status;
+        pid_t w;
+        //Zdejmowanie martwych procesów
+        while ((w = waitpid(-1, &status, WNOHANG)) > 0) {
+            statki_na_morzu--;
+        }
+
+        if (w == -1 && errno == ECHILD) {
+            statki_na_morzu = 0;
+        }
+
+        while (statki_na_morzu >= N_FLOTA) {
+            w = wait(&status); 
+            if (w > 0) {
+                statki_na_morzu--;
+            } else if (w == -1 && errno == ECHILD) {
+                statki_na_morzu = 0;
+                break;
+            } else if (errno == EINTR) {
+                continue; 
+            }
+        }
+
         //Sprawdzenie warunków zakończenia
         s_op(semid, SEM_SYSTEM_MUTEX, -1);
         int pozostalo = sd->pasazerowie_w_systemie;
         bool zamkniete = sd->blokada_odprawy;
         s_op(semid, SEM_SYSTEM_MUTEX, 1);
 
+        //Jeśli koniec pracy i statki wróciły
+        if (pozostalo <= 0 && zamkniete && statki_na_morzu == 0) {
+            break;
+        }
+
+        //Jeśli koniec pracy, ale statki wciąż płyną
         if (pozostalo <= 0 && zamkniete) {
-            break; //Koniec pracy
+            continue;
         }
 
         //Oczekiwanie na dostępny prom
@@ -86,6 +114,8 @@ int main() {
             if (errno == EINTR || errno == EIDRM) break;
             break;
         }
+
+        force_departure = 0;
 
         StatekInfo *statek = &flota[current_ship_idx];
 
@@ -232,8 +262,9 @@ int main() {
             //Zwrot promu do puli
             s_op(semid, SEM_FLOTA, 1);
             exit(0);
+        } else {
+        statki_na_morzu++;
         }
-
         //Przejście do następnego promu
         current_ship_idx = (current_ship_idx + 1) % N_FLOTA;
     }

@@ -1,5 +1,3 @@
-//kapitan_portu.c
-
 #include "common.h"
 
 //ZMIENNE GLOBALNE DLA OBSŁUGI SYGNAŁÓW

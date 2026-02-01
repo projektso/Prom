@@ -7,7 +7,7 @@ volatile sig_atomic_t received_signal2 = 0;
 //HANDLER SYGNAŁU SIGTERM/SIGINT
 void handle_term(int sig) {
     (void)sig;
-    should_exit = 1;
+    should_exit = 1; 
 }
 
 //HANDLER SYGNAŁU SIGUSR2
@@ -444,8 +444,8 @@ int main(int argc, char* argv[]) {
             na_trapie = true;
             czekam_na_trapie = false;
             
-            logger(C_C, "P%d [%s]: Wchodzę na trap (pozycja %d/%d).", 
-                   id, is_vip ? "VIP" : "STD", sd->trap_count, K_TRAP);
+            logger(C_C, "P%d [%s]: Wchodzę na trap.", 
+                   id, is_vip ? "VIP" : "STD");
             
             s_op(semid, SEM_TRAP_MUTEX, 1);
             

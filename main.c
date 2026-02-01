@@ -24,7 +24,7 @@ void kill_all_processes() {
     }
 }
 
-//Zwalnianie zasobów IPC
+//Zwalnianie zasobów IPC 
 void cleanup_ipc() {
     if (sd) { shmdt(sd); sd = NULL; } //Odłączenie pamięci
     if (shmid != -1) { shmctl(shmid, IPC_RMID, NULL); shmid = -1; } //Usunięcie pamięci
