@@ -1,3 +1,5 @@
+//kapitan_promu.c
+
 #include "common.h"
 
 //STRUKTURA INFORMACJI O STATKU
@@ -67,6 +69,7 @@ int main() {
 
     //GŁÓWNA PĘTLA OBSŁUGI PROMÓW
     while (1) {
+        while (waitpid(-1, NULL, WNOHANG) > 0);
         //Sprawdzenie warunków zakończenia
         s_op(semid, SEM_SYSTEM_MUTEX, -1);
         int pozostalo = sd->pasazerowie_w_systemie;
@@ -220,9 +223,9 @@ int main() {
                    moje_id, final_passengers, Ti_REJS);
             
             //Czekanie Ti sekund
-            struct sembuf sb_dummy = {SEM_FLOTA, 0, 0};
+            struct sembuf sb_wait = {SEM_REJS_WAIT, -1, 0};
             struct timespec ts_rejs = {Ti_REJS, 0};
-            semtimedop(semid, &sb_dummy, 1, &ts_rejs);
+            semtimedop(semid, &sb_wait, 1, &ts_rejs);
             
             logger(C_B, "<<< [PROM %d] WRÓCIŁ do bazy.", moje_id);
             

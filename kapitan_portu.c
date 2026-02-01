@@ -1,3 +1,5 @@
+//kapitan_portu.c
+
 #include "common.h"
 
 //ZMIENNE GLOBALNE DLA OBSŁUGI SYGNAŁÓW
@@ -68,9 +70,9 @@ int main() {
     //OCZEKIWANIE NA START
     logger(C_C, "[KAPITAN PORTU] Pierwszy prom za %d sekund...", T_START_DELAY);
     
-    struct sembuf sb_dummy = {SEM_FERRY_READY, 0, 0};
+    struct sembuf sb_wait = {SEM_REJS_WAIT, -1, 0};
     struct timespec ts_delay = {T_START_DELAY, 0};
-    semtimedop(semid, &sb_dummy, 1, &ts_delay);
+    semtimedop(semid, &sb_wait, 1, &ts_delay);
     
     logger(C_C, "[KAPITAN PORTU] Wysyłam sygnał - można podstawić prom!");
     sd->pierwszy_prom_podstawiony = true;
@@ -100,6 +102,11 @@ int main() {
             sd->blokada_odprawy = true;
             s_op(semid, SEM_SYSTEM_MUTEX, 1);
             
+            //Budzenie pasażerów śpiących w kolejkach
+            for (int i = 0; i < 1000; i++) { 
+                s_op_nowait(semid, SEM_ODPRAWA_QUEUE, 1);
+                s_op_nowait(semid, SEM_BRAMKA, 1);
+            }
         }
         
         //Sprawdzenie czy są jeszcze pasażerowie

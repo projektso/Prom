@@ -143,6 +143,7 @@ int main(int argc, char* argv[]) {
     semctl(semid, SEM_FLOTA, SETVAL, N_FLOTA);
     semctl(semid, SEM_TIMER_SIGNAL, SETVAL, 0);
     semctl(semid, SEM_TRAP_EMPTY, SETVAL, 0);
+    semctl(semid, SEM_REJS_WAIT, SETVAL, 0);
 
     //START SYMULACJI
     logger(C_G, "========== START SYMULACJI ==========");
@@ -230,7 +231,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    
+
     sd->wszyscy_obsluzeni = true;
 
     //OCZEKIWANIE NA ZAKOŃCZENIE KAPITANÓW

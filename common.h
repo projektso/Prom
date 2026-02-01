@@ -90,6 +90,7 @@ enum {
     SEM_FLOTA, //Liczba dostępnych promów
     SEM_TIMER_SIGNAL, //Sygnał zakończenia załadunku
     SEM_TRAP_EMPTY, //Sygnał że trap jest pusty
+    SEM_REJS_WAIT, //Sygnał oczekiwania na pierwszy rejs
 
     SEM_COUNT //Łączna liczba semaforów
 };

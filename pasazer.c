@@ -317,7 +317,6 @@ int main(int argc, char* argv[]) {
         
         //Sprawdzenie czy była już próba dostania się na ten prom
         if (ostatni_prom_za_ciezki == numer_promu) {
-            //Budzenie następnego pasażera, z pominięciem kolejki heavy
             if (sd->trap_wait_return > 0) {
                 s_op(semid, SEM_TRAP_Q_RETURN, 1);
                 sd->trap_wait_return--;
@@ -327,6 +326,9 @@ int main(int argc, char* argv[]) {
             } else if (sd->trap_wait_norm > 0) {
                 s_op(semid, SEM_TRAP_Q_NORM, 1);
                 sd->trap_wait_norm--;
+            } else if (sd->trap_wait_heavy > 0) {
+                s_op(semid, SEM_TRAP_Q_HEAVY, 1);
+                sd->trap_wait_heavy--;
             }
             
             //Powrót do kolejki heavy
@@ -392,6 +394,7 @@ int main(int argc, char* argv[]) {
                 } else if (sd->trap_wait_norm > 0) {
                     s_op(semid, SEM_TRAP_Q_NORM, 1);
                     sd->trap_wait_norm--;
+                } else {
                 }
                 
                 //Przejście do kolejki heavy
@@ -420,6 +423,10 @@ int main(int argc, char* argv[]) {
                     sd->trap_wait_return++;
                     s_op(semid, SEM_TRAP_MUTEX, 1);
                     s_op(semid, SEM_TRAP_Q_RETURN, -1);
+                } else if (moja_kolejka == 3) {
+                    sd->trap_wait_heavy++;
+                    s_op(semid, SEM_TRAP_MUTEX, 1);
+                    s_op(semid, SEM_TRAP_Q_HEAVY, -1);
                 } else if (moja_kolejka == 1) {
                     sd->trap_wait_vip++;
                     s_op(semid, SEM_TRAP_MUTEX, 1);
@@ -439,21 +446,6 @@ int main(int argc, char* argv[]) {
             
             logger(C_C, "P%d [%s]: Wchodzę na trap (pozycja %d/%d).", 
                    id, is_vip ? "VIP" : "STD", sd->trap_count, K_TRAP);
-            
-            //Budzenie następnej osoby
-            if (sd->trap_wait_return > 0) {
-                s_op(semid, SEM_TRAP_Q_RETURN, 1);
-                sd->trap_wait_return--;
-            } else if (sd->trap_wait_heavy > 0) {
-                s_op(semid, SEM_TRAP_Q_HEAVY, 1);
-                sd->trap_wait_heavy--;
-            } else if (sd->trap_wait_vip > 0) {
-                s_op(semid, SEM_TRAP_Q_VIP, 1);
-                sd->trap_wait_vip--;
-            } else if (sd->trap_wait_norm > 0) {
-                s_op(semid, SEM_TRAP_Q_NORM, 1);
-                sd->trap_wait_norm--;
-            }
             
             s_op(semid, SEM_TRAP_MUTEX, 1);
             
@@ -513,6 +505,21 @@ int main(int argc, char* argv[]) {
             s_op_nowait(semid, SEM_TRAP_EMPTY, 1);
         }
         
+        //Budzenie następnej osoby
+        if (sd->trap_wait_return > 0) {
+            s_op(semid, SEM_TRAP_Q_RETURN, 1);
+            sd->trap_wait_return--;
+        } else if (sd->trap_wait_heavy > 0) {
+            s_op(semid, SEM_TRAP_Q_HEAVY, 1);
+            sd->trap_wait_heavy--;
+        } else if (sd->trap_wait_vip > 0) {
+            s_op(semid, SEM_TRAP_Q_VIP, 1);
+            sd->trap_wait_vip--;
+        } else if (sd->trap_wait_norm > 0) {
+            s_op(semid, SEM_TRAP_Q_NORM, 1);
+            sd->trap_wait_norm--;
+        }
+
         s_op(semid, SEM_TRAP_MUTEX, 1);
         w_srodku = true;
     }
