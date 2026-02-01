@@ -1,10 +1,12 @@
 #include "common.h"
 
+//STRUKTURA INFORMACJI O STATKU
 typedef struct {
     int id;
     int limit_bagazu;
 } StatekInfo;
 
+//ZMIENNA GLOBALNA DLA OBSŁUGI SYGNAŁU
 volatile sig_atomic_t force_departure = 0;
 
 void handle_sigusr1(int sig) {
@@ -13,12 +15,14 @@ void handle_sigusr1(int sig) {
 }
 
 int main() {
+    //REJESTRACJA HANDLERA SYGNAŁU 
     struct sigaction sa;
     sa.sa_handler = handle_sigusr1;
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGUSR1, &sa, NULL);
 
+    //POŁĄCZENIE Z ZASOBAMI IPC
     key_t key = ftok(PATH_NAME, PROJECT_ID);
     if (key == -1) { perror("ftok"); exit(1); }
     
@@ -31,15 +35,18 @@ int main() {
     SharedData *sd = (SharedData*)shmat(shmid, NULL, 0);
     if (sd == (void*)-1) { perror("shmat"); exit(1); }
 
+    //Zapisanie PID i zainicjowanie generatora liczb losowych
     sd->pid_kapitan_promu = getpid();
     srand(time(NULL) ^ getpid());
 
+    //INICJALIZACJA FLOTY
     StatekInfo flota[N_FLOTA];
     for (int i = 0; i < N_FLOTA; i++) {
         flota[i].id = i + 1;
         flota[i].limit_bagazu = 15 + (rand() % 15);
     }
     
+    //Upewnienie się że minimum 1 prom ma limit >= Mp_LIMIT_ODPRAWY
     bool jest_wystarczajacy = false;
     for (int i = 0; i < N_FLOTA; i++) {
         if (flota[i].limit_bagazu >= Mp_LIMIT_ODPRAWY) {
@@ -53,20 +60,24 @@ int main() {
 
     int current_ship_idx = 0;
 
+    //OCZEKIWANIE NA SYGNAŁ OD KAPITANA PORTU
     logger(C_B, "[KAPITAN PROMU] Czekam na sygnał od kapitana portu...");
     s_op(semid, SEM_FERRY_READY, -1);
     logger(C_B, "[KAPITAN PROMU] Otrzymano sygnał. Rozpoczynam obsługę.");
 
+    //GŁÓWNA PĘTLA OBSŁUGI PROMÓW
     while (1) {
+        //Sprawdzenie warunków zakończenia
         s_op(semid, SEM_SYSTEM_MUTEX, -1);
         int pozostalo = sd->pasazerowie_w_systemie;
         bool zamkniete = sd->blokada_odprawy;
         s_op(semid, SEM_SYSTEM_MUTEX, 1);
 
         if (pozostalo <= 0 && zamkniete) {
-            break;
+            break; //Koniec pracy
         }
 
+        //Oczekiwanie na dostępny prom
         struct sembuf sb_fleet = {SEM_FLOTA, -1, 0};
         if (semop(semid, &sb_fleet, 1) == -1) {
             if (errno == EINTR || errno == EIDRM) break;
@@ -75,21 +86,28 @@ int main() {
 
         StatekInfo *statek = &flota[current_ship_idx];
 
+        //Podstawienie promu
         s_op(semid, SEM_TRAP_MUTEX, -1);
+        
+        //Ustawienie informacji o promie
         sd->prom_numer = statek->id;
         sd->limit_bagazu_aktualny = statek->limit_bagazu;
         sd->prom_w_porcie = true;
         sd->zaladunek_aktywny = true;
         sd->trap_count = 0;
         
+        //Odczyt liczby czekających pasażerów
         int czekajacy_return = sd->trap_wait_return;
         int czekajacy_heavy = sd->trap_wait_heavy;
         int czekajacy_vip = sd->trap_wait_vip;
         int czekajacy_norm = sd->trap_wait_norm;
+        
         s_op(semid, SEM_TRAP_MUTEX, 1);
         
+        //Reset flagi sygnału
         force_departure = 0;
         
+        //Reset semaforów dla nowego załadunku
         semctl(semid, SEM_FERRY_CAPACITY, SETVAL, P_POJEMNOSC);
         semctl(semid, SEM_TIMER_SIGNAL, SETVAL, 0);
         semctl(semid, SEM_TRAP_EMPTY, SETVAL, 0);
@@ -101,6 +119,7 @@ int main() {
                statek->id, czekajacy_return + czekajacy_heavy + czekajacy_vip + czekajacy_norm,
                czekajacy_return, czekajacy_heavy, czekajacy_vip, czekajacy_norm, T1_OCZEKIWANIE);
         
+        //BUDZENIE PASAŻERÓW
         s_op(semid, SEM_TRAP_MUTEX, -1);
         
         if (sd->trap_wait_return > 0) {
@@ -119,6 +138,7 @@ int main() {
         
         s_op(semid, SEM_TRAP_MUTEX, 1);
 
+        //OCZEKIWANIE NA CZAS T1 (LUB SYGNAŁ)
         struct timespec timeout = {T1_OCZEKIWANIE, 0};
         struct sembuf sb_timer = {SEM_TIMER_SIGNAL, -1, 0};
         
@@ -128,15 +148,16 @@ int main() {
             
             if (ret == -1) {
                 if (errno == EAGAIN || errno == ETIMEDOUT) {
-                    time_up = true;
+                    time_up = true; //Czas T1 minął
                 } else if (errno == EINTR) {
+                    //Sprawdzenie czy to sygnał wcześniejszego wypłynięcia
                     if (force_departure) {
                         logger(C_M, "[PROM %d] SYGNAŁ 1! Wypływam wcześniej.", statek->id);
                         time_up = true;
                     }
                     continue;
                 } else if (errno == EIDRM) {
-                    goto cleanup;
+                    goto cleanup; //Semafory usunięte
                 } else {
                     time_up = true;
                 }
@@ -145,15 +166,17 @@ int main() {
             }
         }
         
+        //Sprawdzenie stanu załadunku
         int wolne = semctl(semid, SEM_FERRY_CAPACITY, GETVAL);
         int na_pokladzie = P_POJEMNOSC - wolne;
         
         logger(C_B, "[PROM %d] Czas T1 minął. Na pokładzie: %d/%d.", 
                statek->id, na_pokladzie, P_POJEMNOSC);
 
+        //ZAMKNIĘCIE ZAŁADUNKU
         s_op(semid, SEM_TRAP_MUTEX, -1);
         sd->zaladunek_aktywny = false;
-                
+
         int na_trapie = sd->trap_count;
         s_op(semid, SEM_TRAP_MUTEX, 1);
 
@@ -162,6 +185,7 @@ int main() {
                    statek->id, na_trapie);
         }
 
+        //OCZEKIWANIE NA PUSTY TRAP
         while (1) {
             s_op(semid, SEM_TRAP_MUTEX, -1);
             int on_trap = sd->trap_count;
@@ -176,6 +200,7 @@ int main() {
         sd->prom_w_porcie = false;
         int final_passengers = P_POJEMNOSC - semctl(semid, SEM_FERRY_CAPACITY, GETVAL);
 
+        //OBSŁUGA PUSTEGO PROMU
         if (final_passengers == 0) {
             logger(C_Y, "[PROM %d] Brak pasażerów - prom wraca do kolejki.", statek->id);
             s_op(semid, SEM_FLOTA, 1);
@@ -183,30 +208,37 @@ int main() {
             continue;
         }
 
+        //REJS - UTWORZENIE PROCESU POTOMNEGO
         pid_t rejs_pid = fork();
         if (rejs_pid == -1) {
             logger(C_R, "[PROM %d] BŁĄD fork!", statek->id);
             s_op(semid, SEM_FLOTA, 1);
         } else if (rejs_pid == 0) {
+            //Proces potomny - symulacja rejsu
             int moje_id = statek->id;
             logger(C_B, ">>> [PROM %d] ODPŁYWA (Pasażerów: %d). Rejs: %ds.", 
                    moje_id, final_passengers, Ti_REJS);
             
+            //Czekanie Ti sekund
             struct sembuf sb_dummy = {SEM_FLOTA, 0, 0};
             struct timespec ts_rejs = {Ti_REJS, 0};
             semtimedop(semid, &sb_dummy, 1, &ts_rejs);
             
             logger(C_B, "<<< [PROM %d] WRÓCIŁ do bazy.", moje_id);
             
+            //Zwrot promu do puli
             s_op(semid, SEM_FLOTA, 1);
             exit(0);
         }
 
+        //Przejście do następnego promu
         current_ship_idx = (current_ship_idx + 1) % N_FLOTA;
     }
 
 cleanup:
+    //Zbieranie procesów potomnych - zapobieganie zombie
     while (wait(NULL) > 0);
+    
     shmdt(sd);
     return 0;
 }
