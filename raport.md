@@ -95,7 +95,7 @@ Program został podzielony na moduły zgodnie z zasadą separacji odpowiedzialno
 * s_op(int semid, int n, int op) (common.h): Wrapper na funkcję semop(). Obsługuje błąd EINTR (sygnały) i automatycznie raportuje błędy krytyczne (perror), zapewniając stabilność operacji na semaforach.
 * handle_sigusr2(int sig) (kapitan_portu.c): Obsługuje sygnał zamknięcia portu. Kluczowy element: po ustawieniu blokady uruchamia procedurę sztucznego podnoszenia semaforów, aby obudzić pasażerów i zapobiec zakleszczeniu.
 * main() (pasazer.c): Implementuje maszynę stanów pasażera, w tym logikę wyboru kolejek i obsługę cofania z trapu.
-* sprzatanie() (main.c): Funkcja zarejestrowana w atexit. Gwarantuje usunięcie zasobów IPC i zabicie procesów potomnych niezależnie od sposobu zakończenia programu.
+* main.c: Punkt wejścia. Odpowiada za inicjalizację zasobów IPC. Zawiera pętlę tworzenia procesów, która dynamicznie zarządza tworzeniem pasażerów – wykorzystuje semafor z timeoutem (s_op_timed) oraz bieżące sprzątanie procesów zombie (waitpid z WNOHANG), aby zapobiec przeciążeniu tablicy procesów systemu operacyjnego przy dużej liczbie pasażerów (10 000+).
 
 ## 4. Realizacja i dodane elementy
 **Co udało się zrealizować:**
@@ -112,10 +112,48 @@ Program został podzielony na moduły zgodnie z zasadą separacji odpowiedzialno
 
 
 ## 5. Raport z testów
-* Test 1:
-* Test 2:
-* Test 3:
-* Test 4:
+**Test 1 - Test Obciążeniowy (Stress Test):**
+* Cel: Weryfikacja stabilności systemu przy ekstremalnym obciążeniu oraz sprawdzenie odporności na wyczerpanie limitów systemowych.
+* Scenariusz: Uruchomienie symulacji z parametrem 10 000 pasażerów. Program jest zmuszony do ciągłego tworzenia i kończenia procesów, aby nie przekroczyć limitu ulimit -u.
+* Weryfikowane aspekty:
+1. Poprawność mechanizmu "dławienia"w main.c – czy program czeka na zwolnienie slotów w tablicy procesów zamiast kończyć się błędem EAGAIN.
+2. Brak wycieków pamięci i procesów zombie (poprawność działania waitpid z flagą WNOHANG).
+3. Synchronizacja semaforów przy dużej kolejce oczekujących (czy nikt nie został pominięty).
+* Oczekiwany rezultat: Symulacja kończy się sukcesem. Wszystkie 10 000 procesów zostaje obsłużonych. Brak zombie po zakończeniu działania.
+* Wynik: POZYTYWNY.
+
+**Test 2 - Test Odporności na Błędne Dane (Fuzzing):**
+* Cel: Sprawdzenie poprawności walidacji danych wejściowych i odporności programu na "złośliwe" argumenty.
+* Scenariusz: Próba uruchomienia programu ./main z serią nieprawidłowych argumentów:
+1. Liczba ujemna (-5).
+2. Zero (0).
+3. Ciąg znaków zamiast liczby ("abc").
+4. Wartość przekraczająca rozsądny limit (200000).
+* Weryfikowane aspekty:
+1. Czy funkcja validate_process_count poprawnie wykrywa błędy.
+2. Czy program kończy działanie w sposób kontrolowany, wypisując komunikat błędu na stderr, zamiast ulec awarii lub wejść w nieskończoną pętlę.
+* Oczekiwany rezultat: Program odrzuca wszystkie błędne dane, wyświetla komunikat np. BŁĄD: Liczba pasażerów... i bezpiecznie kończy działanie przed alokacją zasobów IPC.
+* Wynik: POZYTYWNY.
+
+**Test 3 - Test Asynchroniczności i Sygnałów Sterujących (Signal Spam):**
+* Cel: Weryfikacja obsługi asynchronicznych sygnałów (SIGUSR1) oraz sprawdzenie, czy przerwania systemowe (EINTR) nie powodują błędów w operacjach na semaforach.
+* Scenariusz: Uruchomienie symulacji, a następnie wysłanie serii sygnałów SIGUSR1 (wymuszenie wypłynięcia) do procesu Kapitana Promu, podczas trwania załadunku pasażerów.
+* Weryfikowane aspekty:
+1. Czy funkcje semop poprawnie wznawiają działanie po przerwaniu sygnałem.
+2. Czy Kapitan Promu poprawnie przerywa oczekiwanie na czas T1 i zamyka trap.
+3. Czy pasażerowie znajdujący się na trapie w momencie sygnału są poprawnie cofani.
+* Oczekiwany rezultat: Promy wypływają wcześniej niż wynika to z czasu T1. Program nie zawiesza się ani nie kończy błędem. Pasażerowie cofnięci z trapu trafiają do kolejki priorytetowej RETURN i wchodzą na kolejny prom.
+* Wynik: POZYTYWNY.
+
+**Test 4 - Test Wykrywania Zakleszczeń i Graceful Shutdown (Deadlock Check):**
+* Cel: Sprawdzenie, czy system potrafi bezpiecznie się zamknąć w sytuacji awaryjnej, nie pozostawiając śpiących procesów.
+* Scenariusz: Symulacja zostaje uruchomiona, a kolejki (odprawa, kontrola, poczekalnia) wypełniają się pasażerami, którzy są zablokowani na semaforach (czekają na obsługę). Następnie do Kapitana Portu wysyłany jest sygnał SIGUSR2 (Zamknięcie Portu).
+* Weryfikowane aspekty:
+1. Czy Kapitan Portu po odebraniu sygnału ustawia flagę blokada_odprawy.
+2. Czy proces zarządczy "ręcznie" podnosi semafory kolejek (SEM_ODPRAWA_QUEUE, SEM_SEC_QUEUE, SEM_BRAMKA), aby obudzić śpiące procesy.
+3. Czy obudzone procesy poprawnie odczytują flagę blokady i kończą działanie (exit), zamiast próbować dalej wykonywać logikę (co prowadziłoby do deadlocka).
+* Oczekiwany rezultat: Wszystkie procesy pasażerów kończą działanie. Zasoby IPC zostają zwolnione. Program kończy się komunikatem o sukcesie, a w systemie nie pozostają żadne "wiszące" procesy.
+* Wynik: POZYTYWNY.
 
 
 ## 6. Wykorzystane konstrukcje
@@ -149,29 +187,28 @@ Poniżej znajdują się odnośniki do fragmentów kodu realizujących wymagane k
 
 ### a. Tworzenie i obsługa plików
 * Użycie `open()`, `write()`, `flock()` do bezpiecznego logowania do pliku.
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/common.h#L150-L173
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/common.h#L149-L173
 
 ### b. Tworzenie procesów
 * Użycie `fork()`, `execl()` do tworzenia pasażerów i kapitanów.
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/main.c#L155-L167
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/main.c#L162-L174
 
 * Użycie `waitpid()` z `WNOHANG` do sprzątania zombie.
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/kapitan_promu.c#L71-L81
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/kapitan_promu.c#L69-L77
 
 ### c. Obsługa sygnałów
 * Rejestracja handlerów `sigaction` dla `SIGUSR1`, `SIGUSR2`.
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/kapitan_portu.c#L20-L32
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/kapitan_portu.c#L18-L30
 
 ### d. Synchronizacja procesów (Semafory)
 * Operacje `semop` (blokujące, nieblokujące, z timeoutem).
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/common.h#L175-L229
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/pasazer.c#L259-L525
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/common.h#L175-L229
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/pasazer.c#L457-L469
 
 ### e. Segmenty pamięci dzielonej
 * Inicjalizacja `shmget`, dołączenie `shmat`, struktura `SharedData`.
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/main.c#L94-L110
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/main.c#L101-L117
 
 ### f. Walidacja i obsługa błędów
 * Sprawdzanie limitu procesów i obsługa `perror`.
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/common.h#L231-L238
-* https://github.com/projektso/Prom/blob/5ac78acd76c89044f15b035d8faf6c57ebe7e767/main.c#L90-L110
+* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/common.h#L209-L238
