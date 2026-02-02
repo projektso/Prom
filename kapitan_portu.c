@@ -48,13 +48,15 @@ int main() {
     //Otwarcie portu
     logger(C_C, "[KAPITAN PORTU] Otwieram port!");
     
+    int max_pasazerow = sd->pasazerowie_w_systemie;
+
     //Otwarcie bramek wejściowych
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < max_pasazerow; i++) {
         s_op(semid, SEM_BRAMKA, 1);
     }
 
     //Otwarcie poczekalni
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < max_pasazerow; i++) {
         s_op(semid, SEM_POCZEKALNIA, 1);
     }
     
@@ -101,7 +103,7 @@ int main() {
             s_op(semid, SEM_SYSTEM_MUTEX, 1);
             
             //Budzenie pasażerów śpiących w kolejkach
-            for (int i = 0; i < 1000; i++) { 
+            for (int i = 0; i < 100000; i++) { 
                 s_op_nowait(semid, SEM_ODPRAWA_QUEUE, 1);
                 s_op_nowait(semid, SEM_BRAMKA, 1);
             }

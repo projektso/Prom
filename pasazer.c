@@ -438,7 +438,7 @@ int main(int argc, char* argv[]) {
                 }
                 continue;
             }
-            
+             
             //Wchodzenie na trap
             sd->trap_count++;
             na_trapie = true;

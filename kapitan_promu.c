@@ -115,7 +115,6 @@ int main() {
             break;
         }
 
-        force_departure = 0;
 
         StatekInfo *statek = &flota[current_ship_idx];
 

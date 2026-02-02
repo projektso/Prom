@@ -23,8 +23,8 @@ run: all
 	./main 30
 
 test_stress: all
-	@echo "\n>>> [1/4] URUCHAMIAM TEST STRESS (1000 PASAŻERÓW) <<<"
-	./main 1000
+	@echo "\n>>> [1/4] URUCHAMIAM TEST STRESS (10000 PASAŻERÓW) <<<"
+	./main 10000
 	@echo ">>> TEST STRESS ZAKOŃCZONY SUKCESEM <<<"
 
 test_fuzz: all

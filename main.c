@@ -71,6 +71,13 @@ int main(int argc, char* argv[]) {
     //Walidacja liczby procesów
     if (validate_process_count(liczba_pasazerow) != 0) return 1;
 
+    //Walidacja parametrów
+    if (K_TRAP >= P_POJEMNOSC) {
+        fprintf(stderr, "BŁĄD: Pojemność trapu (%d) musi być mniejsza niż pojemność promu (%d)\n", 
+            K_TRAP, P_POJEMNOSC);
+    return 1;
+    }
+
     //Rejestracja obsługi sygnału SIGINT
     struct sigaction sa;
     sa.sa_handler = handle_sigint;
@@ -176,53 +183,13 @@ int main(int argc, char* argv[]) {
 
     //TWORZENIE PROCESÓW PASAŻERÓW
     char buff[32];
-    for (int i = 1; i <= liczba_pasazerow; i++) {
-        //Sprawdzanie dostępności slotu procesów
-        if (s_op_nowait(semid, SEM_PROCESY, -1) == -1) {
-            logger(C_R, "[MAIN] Brak slotów przy P%d", i);
-            sd->pasazerowie_w_systemie = liczba_utworzonych;
-            sd->blokada_odprawy = true;
-            exit(1);
-        }
-        
-        //Tworzenie procesu pasażera
-        pid_t p = fork();
-        if (p == -1) {
-            s_op(semid, SEM_PROCESY, 1);
-            logger(C_R, "[MAIN] Fork failed przy P%d", i);
-            sd->pasazerowie_w_systemie = liczba_utworzonych;
-            sd->blokada_odprawy = true;
-            exit(1);
-        }
-        
-        if (p == 0) {
-            //Proces potomny - uruchomienie programu pasażera
-            sprintf(buff, "%d", i);
-            execl("./pasazer", "pasazer", buff, NULL);
-            exit(1);
-        }
-        
-        //Proces macierzysty - zapisanie PID
-        pid_pasazerowie[liczba_utworzonych++] = p;
-        
-        //Zapisanie PID do pamięci dzielonej (dla kapitana portu)
-        sd->pidy_pasazerow[liczba_utworzonych - 1] = p;
-        sd->liczba_pasazerow_pidy = liczba_utworzonych;
-    }
-
-    //OCZEKIWANIE NA ZAKOŃCZENIE PASAŻERÓW
+    int nastepny_id = 1;
     int completed = 0;
-    while (completed < liczba_utworzonych) {
-        int status;
-        pid_t done = wait(&status);
-        
-        if (done == -1) {
-            if (errno == ECHILD) break;
-            if (errno == EINTR) continue;
-            break;
-        }
-        
-        //Znalezienie i oznaczenie zakończonego pasażera
+    while (nastepny_id <= liczba_pasazerow || completed < liczba_utworzonych) {
+    //Zbieranie zakończonych procesów
+    int status;
+    pid_t done;
+    while ((done = waitpid(-1, &status, WNOHANG)) > 0) {
         for (int i = 0; i < liczba_utworzonych; i++) {
             if (pid_pasazerowie[i] == done) {
                 pid_pasazerowie[i] = 0;
@@ -231,6 +198,54 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+    
+    //Tworzenie nowych pasażerów
+    if (nastepny_id <= liczba_pasazerow) {
+        int ret = s_op_timed(semid, SEM_PROCESY, -1, 1);  // 1s timeout
+        
+        if (ret == 0) {
+            //Jest slot - tworzenie pasażera
+            if (sd->blokada_odprawy) {
+                s_op(semid, SEM_PROCESY, 1);
+                break;
+            }
+            
+            pid_t p = fork();
+            if (p == -1) {
+                s_op(semid, SEM_PROCESY, 1);
+                continue;
+            }
+            
+            if (p == 0) {
+                sprintf(buff, "%d", nastepny_id);
+                execl("./pasazer", "pasazer", buff, NULL);
+                exit(1);
+            }
+            
+            pid_pasazerowie[liczba_utworzonych++] = p;
+            if (liczba_utworzonych <= 100000) {
+                sd->pidy_pasazerow[liczba_utworzonych - 1] = p;
+                sd->liczba_pasazerow_pidy = liczba_utworzonych;
+            }
+            nastepny_id++;
+        }
+        // Jeśli timeout - pętla się powtórzy i zbierze zombie
+    } else {
+        //Wszyscy utworzeni - blokujące czekanie na zakończenie
+        done = wait(&status);
+        if (done > 0) {
+            for (int i = 0; i < liczba_utworzonych; i++) {
+                if (pid_pasazerowie[i] == done) {
+                    pid_pasazerowie[i] = 0;
+                    completed++;
+                    break;
+                }
+            }
+        } else if (done == -1 && errno == ECHILD) {
+            break;
+        }
+    }
+}
 
     sd->wszyscy_obsluzeni = true;
 

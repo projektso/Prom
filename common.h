@@ -28,7 +28,7 @@
 #define LOG_FILE "symulacja_prom.txt"
 
 //PARAMETRY SYMULACJI - PROMY
-#define N_FLOTA 3
+#define N_FLOTA 5
 #define P_POJEMNOSC 6
 #define K_TRAP 3
 #define T1_OCZEKIWANIE 5
