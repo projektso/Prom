@@ -103,7 +103,7 @@ int main() {
             s_op(semid, SEM_SYSTEM_MUTEX, 1);
             
             //Budzenie pasażerów śpiących w kolejkach
-            for (int i = 0; i < 100000; i++) { 
+            for (int i = 0; i < 20000; i++) { 
                 s_op_nowait(semid, SEM_ODPRAWA_QUEUE, 1);
                 s_op_nowait(semid, SEM_BRAMKA, 1);
             }
