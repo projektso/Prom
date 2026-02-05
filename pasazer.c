@@ -237,13 +237,13 @@ int main(int argc, char* argv[]) {
     int moja_kolejka; // 0=NORM, 1=VIP, 2=RETURN, 3=HEAVY
     
     if (is_vip) {
-        logger(C_M, "P%d [VIP]: Idę do kolejki VIP.", id);
         moja_kolejka = 1;
         
         s_op(semid, SEM_TRAP_MUTEX, -1);
+        logger(C_M, "P%d [VIP]: Idę do kolejki VIP.", id);
         sd->trap_wait_vip++;
         s_op(semid, SEM_TRAP_MUTEX, 1);
-        
+        sleep(80);
         s_op(semid, SEM_TRAP_Q_VIP, -1); //Czekanie w kolejce VIP
     } else {
         s_op(semid, SEM_POCZEKALNIA, -1); //Wejście do poczekalni
@@ -252,10 +252,10 @@ int main(int argc, char* argv[]) {
         s_op(semid, SEM_TRAP_MUTEX, -1);
         sd->trap_wait_norm++;
         s_op(semid, SEM_TRAP_MUTEX, 1);
-        
+        sleep(80);
         s_op(semid, SEM_TRAP_Q_NORM, -1); //Czekanie w kolejce zwykłej
     }
-    
+
     //ETAP 5: WEJŚCIE NA TRAP I PROM
     bool w_srodku = false;
     bool na_trapie = false;

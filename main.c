@@ -44,6 +44,10 @@ void sprzatanie() {
     //Zbieranie procesów zombie
     while (waitpid(-1, NULL, WNOHANG) > 0);
     
+    if (sd) {
+    printf(" Utworzeni pasażerowie:   %ld\n", sd->stat_utworzeni);
+    printf(" Przepłynęli (sukces):    %ld\n", sd->stat_przeplyneli);
+    }
     cleanup_ipc();
     
     logger(C_G, "[MAIN] Zakończono.");
@@ -119,6 +123,9 @@ int main(int argc, char* argv[]) {
     //Inicjalizacja pamięci dzielonej
     memset(sd, 0, sizeof(SharedData));
     sd->pasazerowie_w_systemie = liczba_pasazerow;
+
+    sd->stat_utworzeni = 0;
+    sd->stat_przeplyneli = 0;
 
     //INICJALIZACJA SEMAFORÓW
 
@@ -223,6 +230,7 @@ int main(int argc, char* argv[]) {
             }
             
             pid_pasazerowie[liczba_utworzonych++] = p;
+            sd->stat_utworzeni++;
             if (liczba_utworzonych <= 100000) {
                 sd->pidy_pasazerow[liczba_utworzonych - 1] = p;
                 sd->liczba_pasazerow_pidy = liczba_utworzonych;

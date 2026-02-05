@@ -144,6 +144,10 @@ typedef struct {
     pid_t pidy_pasazerow[100000];
     int liczba_pasazerow_pidy;
 
+    //Statystyki portu
+    long stat_utworzeni;
+    long stat_przeplyneli;
+
 } SharedData;
 
 //Wypisanie kolorowego komunikatu na terminal i zapisanie go do pliku logu

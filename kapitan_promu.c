@@ -154,16 +154,19 @@ int main() {
         //BUDZENIE PASAŻERÓW
         s_op(semid, SEM_TRAP_MUTEX, -1);
         
-        if (sd->trap_wait_return > 0) {
+        if (sd->trap_wait_return > 0 && semctl(semid, SEM_TRAP_Q_RETURN, GETNCNT, 0) > 0) {
             s_op(semid, SEM_TRAP_Q_RETURN, 1);
             sd->trap_wait_return--;
-        } else if (sd->trap_wait_heavy > 0) {
+        } 
+        else if (sd->trap_wait_heavy > 0 && semctl(semid, SEM_TRAP_Q_HEAVY, GETNCNT, 0) > 0) {
             s_op(semid, SEM_TRAP_Q_HEAVY, 1);
             sd->trap_wait_heavy--;
-        } else if (sd->trap_wait_vip > 0) {
+        } 
+        else if (sd->trap_wait_vip > 0 && semctl(semid, SEM_TRAP_Q_VIP, GETNCNT, 0) > 0) {
             s_op(semid, SEM_TRAP_Q_VIP, 1);
             sd->trap_wait_vip--;
-        } else if (sd->trap_wait_norm > 0) {
+        } 
+        else if (sd->trap_wait_norm > 0 && semctl(semid, SEM_TRAP_Q_NORM, GETNCNT, 0) > 0) {
             s_op(semid, SEM_TRAP_Q_NORM, 1);
             sd->trap_wait_norm--;
         }
@@ -239,6 +242,10 @@ int main() {
             current_ship_idx = (current_ship_idx + 1) % N_FLOTA;
             continue;
         }
+
+        s_op(semid, SEM_SYSTEM_MUTEX, -1);
+        sd->stat_przeplyneli += final_passengers;
+        s_op(semid, SEM_SYSTEM_MUTEX, 1);
 
         //REJS - UTWORZENIE PROCESU POTOMNEGO
         pid_t rejs_pid = fork();
