@@ -106,6 +106,7 @@ int main() {
             for (int i = 0; i < 20000; i++) { 
                 s_op_nowait(semid, SEM_ODPRAWA_QUEUE, 1);
                 s_op_nowait(semid, SEM_BRAMKA, 1);
+                s_op_nowait(semid, SEM_SEC_QUEUE, 1);
             }
         }
         

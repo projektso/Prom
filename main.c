@@ -45,7 +45,7 @@ void sprzatanie() {
     while (waitpid(-1, NULL, WNOHANG) > 0);
     
     if (sd) {
-    printf(" Utworzeni pasażerowie:   %ld\n", sd->stat_utworzeni);
+    printf(" Odprawieni pasażerowie:   %ld\n", sd->stat_odprawieni);
     printf(" Przepłynęli (sukces):    %ld\n", sd->stat_przeplyneli);
     }
     cleanup_ipc();
@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
     memset(sd, 0, sizeof(SharedData));
     sd->pasazerowie_w_systemie = liczba_pasazerow;
 
-    sd->stat_utworzeni = 0;
+    sd->stat_odprawieni = 0;
     sd->stat_przeplyneli = 0;
 
     //INICJALIZACJA SEMAFORÓW
@@ -214,7 +214,14 @@ int main(int argc, char* argv[]) {
             //Jest slot - tworzenie pasażera
             if (sd->blokada_odprawy) {
                 s_op(semid, SEM_PROCESY, 1);
-                break;
+                
+                int nieutworzeni = liczba_pasazerow - nastepny_id + 1;
+                s_op(semid, SEM_SYSTEM_MUTEX, -1);
+                sd->pasazerowie_w_systemie -= nieutworzeni;
+                s_op(semid, SEM_SYSTEM_MUTEX, 1);
+                
+                nastepny_id = liczba_pasazerow + 1;
+                continue;
             }
             
             pid_t p = fork();
@@ -230,7 +237,6 @@ int main(int argc, char* argv[]) {
             }
             
             pid_pasazerowie[liczba_utworzonych++] = p;
-            sd->stat_utworzeni++;
             if (liczba_utworzonych <= 100000) {
                 sd->pidy_pasazerow[liczba_utworzonych - 1] = p;
                 sd->liczba_pasazerow_pidy = liczba_utworzonych;

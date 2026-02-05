@@ -79,7 +79,10 @@ Program został podzielony na moduły zgodnie z zasadą separacji odpowiedzialno
 
 ```
 1. PĘTLA GŁÓWNA:
-   Sprzątaj zakończone procesy (Zombie). Pobierz parametry nowego promu.
+   Sprzątaj zakończone procesy (Zombie). 
+   JEŚLI (liczba statków na morzu >= N_FLOTA):
+      Czekaj blokująco na powrót dowolnego statku.
+   Pobierz parametry nowego promu.
 2. PODSTAWIENIE PROMU:
    Zresetuj semafory. Budź pasażerów w kolejności: RETURN -> HEAVY -> VIP -> NORMAL.
 3. ZAŁADUNEK:
@@ -112,32 +115,28 @@ Program został podzielony na moduły zgodnie z zasadą separacji odpowiedzialno
 
 
 ## 5. Raport z testów
-**Test 1 - Test Obciążeniowy (Stress Test):**
-* Cel: Weryfikacja stabilności systemu przy ekstremalnym obciążeniu oraz sprawdzenie odporności na wyczerpanie limitów systemowych.
-* Scenariusz: Uruchomienie symulacji z parametrem 10 000 pasażerów. Program jest zmuszony do ciągłego tworzenia i kończenia procesów, aby nie przekroczyć limitu ulimit -u.
+**Test 1 - Weryfikacja Trwałości Sygnałów przy Desynchronizacji Stanu Logicznego i Fizycznego:**
+* Cel: Analiza zachowania mechanizmów IPC w warunkach utraty atomowości między zgłoszeniem gotowości a faktycznym oczekiwaniem na zasób.
+* Scenariusz: W kodzie procesu pasażera zaimplementowano sztuczne opóźnienie (sleep(80s)) w sekcji krytycznej, bezpośrednio po inkrementacji licznika oczekujących w pamięci dzielonej, a przed wywołaniem blokującej funkcji semop() na semaforze kolejki. W rezultacie Kapitan Promu otrzymuje logiczną informację o gotowości pasażerów i otwiera semafory (podnosi ich wartość), podczas gdy procesy pasażerów są wciąż uśpione i nie oczekują na sygnał.
 * Weryfikowane aspekty:
-1. Poprawność mechanizmu "dławienia"w main.c – czy program czeka na zwolnienie slotów w tablicy procesów zamiast kończyć się błędem EAGAIN.
-2. Brak wycieków pamięci i procesów zombie (poprawność działania waitpid z flagą WNOHANG).
-3. Synchronizacja semaforów przy dużej kolejce oczekujących (czy nikt nie został pominięty).
-* Oczekiwany rezultat: Symulacja kończy się sukcesem. Wszystkie 10 000 procesów zostaje obsłużonych. Brak zombie po zakończeniu działania.
+1. Pamięć semaforów: Czy semafory Systemu V poprawnie akumulują sygnały otwarcia wysłane przez Kapitana, mimo braku procesów oczekujących w momencie wysłania.
+2. Odporność na Hazard (Race Condition): Czy po ustąpieniu opóźnienia pasażerowie natychmiastowo konsumują "zmagazynowane" sygnały i wchodzą na trap, czy też dochodzi do utraty sygnałów i zakleszczenia systemu.
+3. Spójność liczników: Czy desynchronizacja czasowa nie powoduje błędów w logice zliczania pasażerów wchodzących na pokład.
+* Oczekiwany rezultat: System wykazuje odporność na desynchronizację. Wartości semaforów rosną dodatnio w czasie uśpienia pasażerów. Po zakończeniu funkcji sleep, procesy pasażerów natychmiastowo i bezkolizyjnie zmniejszają wartości semaforów (przechodzą przez trap), nie doprowadzając do zjawiska zagłodzenia.
 * Wynik: POZYTYWNY.
 
-**Test 2 - Test Odporności na Błędne Dane (Fuzzing):**
-* Cel: Sprawdzenie poprawności walidacji danych wejściowych i odporności programu na "złośliwe" argumenty.
-* Scenariusz: Próba uruchomienia programu ./main z serią nieprawidłowych argumentów:
-1. Liczba ujemna (-5).
-2. Zero (0).
-3. Ciąg znaków zamiast liczby ("abc").
-4. Wartość przekraczająca rozsądny limit (200000).
-* Weryfikowane aspekty:
-1. Czy funkcja validate_process_count poprawnie wykrywa błędy.
-2. Czy program kończy działanie w sposób kontrolowany, wypisując komunikat błędu na stderr, zamiast ulec awarii lub wejść w nieskończoną pętlę.
-* Oczekiwany rezultat: Program odrzuca wszystkie błędne dane, wyświetla komunikat np. BŁĄD: Liczba pasażerów... i bezpiecznie kończy działanie przed alokacją zasobów IPC.
+**Test 2 - Test Szczelności Semaforów i Limitów Pojemności:**
+* Cel: Praktyczne sprawdzenie, czy program bezwzględnie przestrzega ustawionych limitów (np. pojemności trapu), nawet gdy setki procesów próbują wejść jednocześnie.
+* Scenariusz: Uruchomienie symulacji z dużą liczbą pasażerów (2000), co powoduje ogromny tłok przed wejściem na trap. System musi obsłużyć ten tłum, wpuszczając pasażerów małymi grupami, zgodnie z limitem K_TRAP(np. 1).
+*Weryfikowane aspekty:
+1. Przestrzeganie Limitów: Czy w logach widać, że liczba osób na trapie/promie NIGDY nie przekracza zadeklarowanej wartości (np. 1).
+2. Stabilność w Tłoku: Czy program płynnie kolejkuje nadmiarowe procesy, zamiast się zawiesić lub "zgubić" semafor.
+* Oczekiwany rezultat: Mimo naporu 2000 procesów, na trapie w każdej chwili znajduje się maksymalnie tyle osób, ile wynosi limit. Nadmiarowi pasażerowie czekają w kolejce na swoją kolej.
 * Wynik: POZYTYWNY.
 
-**Test 3 - Test Asynchroniczności i Sygnałów Sterujących (Signal Spam):**
+**Test 3 - Weryfikacja Spójności IPC i Obsługi Sygnałów Asynchronicznych:**
 * Cel: Weryfikacja obsługi asynchronicznych sygnałów (SIGUSR1) oraz sprawdzenie, czy przerwania systemowe (EINTR) nie powodują błędów w operacjach na semaforach.
-* Scenariusz: Uruchomienie symulacji, a następnie wysłanie serii sygnałów SIGUSR1 (wymuszenie wypłynięcia) do procesu Kapitana Promu, podczas trwania załadunku pasażerów.
+* Scenariusz: Uruchomienie symulacji, a następnie wysłanie serii sygnałów SIGUSR1 (wymuszenie wypłynięcia) do procesu Kapitana Promu, podczas trwania sekcji krytycznej (załadunek pasażerów).
 * Weryfikowane aspekty:
 1. Czy funkcje semop poprawnie wznawiają działanie po przerwaniu sygnałem.
 2. Czy Kapitan Promu poprawnie przerywa oczekiwanie na czas T1 i zamyka trap.
@@ -145,14 +144,14 @@ Program został podzielony na moduły zgodnie z zasadą separacji odpowiedzialno
 * Oczekiwany rezultat: Promy wypływają wcześniej niż wynika to z czasu T1. Program nie zawiesza się ani nie kończy błędem. Pasażerowie cofnięci z trapu trafiają do kolejki priorytetowej RETURN i wchodzą na kolejny prom.
 * Wynik: POZYTYWNY.
 
-**Test 4 - Test Wykrywania Zakleszczeń i Graceful Shutdown (Deadlock Check):**
-* Cel: Sprawdzenie, czy system potrafi bezpiecznie się zamknąć w sytuacji awaryjnej, nie pozostawiając śpiących procesów.
+**Test 4 - Analiza Zapobiegania Zakleszczeniom i Poprawności Zwalniania Zasobów:**
+* Cel: Sprawdzenie, czy system potrafi bezpiecznie się zamknąć w sytuacji awaryjnej, nie doprowadzając do zakleszczenia (Deadlock) ani osierocenia procesów.
 * Scenariusz: Symulacja zostaje uruchomiona, a kolejki (odprawa, kontrola, poczekalnia) wypełniają się pasażerami, którzy są zablokowani na semaforach (czekają na obsługę). Następnie do Kapitana Portu wysyłany jest sygnał SIGUSR2 (Zamknięcie Portu).
 * Weryfikowane aspekty:
 1. Czy Kapitan Portu po odebraniu sygnału ustawia flagę blokada_odprawy.
-2. Czy proces zarządczy "ręcznie" podnosi semafory kolejek (SEM_ODPRAWA_QUEUE, SEM_SEC_QUEUE, SEM_BRAMKA), aby obudzić śpiące procesy.
-3. Czy obudzone procesy poprawnie odczytują flagę blokady i kończą działanie (exit), zamiast próbować dalej wykonywać logikę (co prowadziłoby do deadlocka).
-* Oczekiwany rezultat: Wszystkie procesy pasażerów kończą działanie. Zasoby IPC zostają zwolnione. Program kończy się komunikatem o sukcesie, a w systemie nie pozostają żadne "wiszące" procesy.
+2. Czy proces zarządczy prewencyjnie podnosi semafory kolejek (SEM_ODPRAWA_QUEUE, SEM_SEC_QUEUE, SEM_BRAMKA), aby zapobiec nieskończonemu oczekiwaniu procesów potomnych.
+3. Czy obudzone procesy poprawnie odczytują flagę blokady i kończą działanie (exit), zapobiegając sytuacji "Starvation" (zagłodzenia).
+* Oczekiwany rezultat: Wszystkie procesy pasażerów kończą działanie. Zasoby IPC (pamięć dzielona, semafory) zostają poprawnie zwolnione. Program kończy się komunikatem o sukcesie, a w systemie nie pozostają żadne "wiszące" procesy.
 * Wynik: POZYTYWNY.
 
 

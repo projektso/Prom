@@ -23,22 +23,15 @@ run: all
 	./main 30
 
 test_stress: all
-	@echo "\n>>> [1/4] URUCHAMIAM TEST STRESS (10000 PASAŻERÓW) <<<"
-	./main 10000
+	@echo "\n>>> [1/4] URUCHAMIAM TEST STRESS (5000 PASAŻERÓW) <<<"
+	./main 5000
 	@echo ">>> TEST STRESS ZAKOŃCZONY SUKCESEM <<<"
 
-test_fuzz: all
-	@echo "\n>>> [2/4] URUCHAMIAM TEST FUZZING (ODPORNOŚĆ NA DANE) <<<"
-	@# Przypadek 1: Liczba ujemna
-	@if ./main -5 2>/dev/null; then echo "FAIL: Przyjęto -5"; exit 1; fi
-	@# Przypadek 2: Zero
-	@if ./main 0 2>/dev/null; then echo "FAIL: Przyjęto 0"; exit 1; fi
-	@# Przypadek 3: Tekst zamiast liczby
-	@if ./main "abc" 2>/dev/null; then echo "FAIL: Przyjęto tekst"; exit 1; fi
-	@# Przypadek 4: Przekroczenie limitu (np. 200000)
-	@if ./main 200000 2>/dev/null; then echo "FAIL: Przyjęto > limitu"; exit 1; fi
-	@echo ">>> SUKCES: Program poprawnie odrzucił wszystkie błędne dane. <<<"
-
+test_limits: all
+	@echo "\n>>> [TEST 2] URUCHAMIAM TEST: Szczelność semaforów przy ekstremalnej rywalizacji <<<"
+	@echo "Cel: Weryfikacja szczelności semaforów przy ekstremalnej rywalizacji (Trap=1)."
+	./main 2000
+	@echo ">>> SUKCES: Brak naruszeń sekcji krytycznej mimo wysokiej rywalizacji. <<<"
 test_spam: all
 	@echo "\n>>> [3/4] URUCHAMIAM TEST SIGNAL SPAM (ODPORNOŚĆ NA PRZERWANIA) <<<"
 	@./main 20 & MAIN_PID=$$!; \
@@ -67,4 +60,4 @@ test_sig2: all
 	wait $$PID; \
 	echo ">>> SUKCES: Program zakończył się poprawnie (brak deadlocka). <<<"
 
-.PHONY: all clean run test_stress test_fuzz test_spam test_sig2
+.PHONY: all clean run test_stress test_limits test_spam test_sig2

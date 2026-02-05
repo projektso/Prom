@@ -145,7 +145,7 @@ typedef struct {
     int liczba_pasazerow_pidy;
 
     //Statystyki portu
-    long stat_utworzeni;
+    long stat_odprawieni;
     long stat_przeplyneli;
 
 } SharedData;

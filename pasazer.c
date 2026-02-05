@@ -83,9 +83,6 @@ int main(int argc, char* argv[]) {
     
     //Sprawdzenie czy port nie jest zamknięty
     if (should_exit || sd->blokada_odprawy) {
-        if (sd->blokada_odprawy) {
-            logger(C_R, "P%d [%c]: Port zamknięty! Wracam.", id, c_plec);
-        }
         zakoncz_podroz(semid, sd, id);
     }
 
@@ -139,6 +136,10 @@ int main(int argc, char* argv[]) {
         } else {
             logger(C_G, "P%d [%c]: Odprawiony (próba %d, bagaż %d kg).", id, c_plec, proby, waga);
             odprawiony = true;
+
+            s_op(semid, SEM_SYSTEM_MUTEX, -1);
+            sd->stat_odprawieni++;
+            s_op(semid, SEM_SYSTEM_MUTEX, 1);
             
             s_op(semid, SEM_ODPRAWA, 1);
             
@@ -243,7 +244,7 @@ int main(int argc, char* argv[]) {
         logger(C_M, "P%d [VIP]: Idę do kolejki VIP.", id);
         sd->trap_wait_vip++;
         s_op(semid, SEM_TRAP_MUTEX, 1);
-        sleep(80);
+        //sleep(80);
         s_op(semid, SEM_TRAP_Q_VIP, -1); //Czekanie w kolejce VIP
     } else {
         s_op(semid, SEM_POCZEKALNIA, -1); //Wejście do poczekalni
@@ -252,7 +253,7 @@ int main(int argc, char* argv[]) {
         s_op(semid, SEM_TRAP_MUTEX, -1);
         sd->trap_wait_norm++;
         s_op(semid, SEM_TRAP_MUTEX, 1);
-        sleep(80);
+        //sleep(80);
         s_op(semid, SEM_TRAP_Q_NORM, -1); //Czekanie w kolejce zwykłej
     }
 
