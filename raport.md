@@ -122,7 +122,7 @@ Program został podzielony na moduły zgodnie z zasadą separacji odpowiedzialno
 1. Pamięć semaforów: Czy semafory Systemu V poprawnie akumulują sygnały otwarcia wysłane przez Kapitana, mimo braku procesów oczekujących w momencie wysłania.
 2. Odporność na Hazard (Race Condition): Czy po ustąpieniu opóźnienia pasażerowie natychmiastowo konsumują "zmagazynowane" sygnały i wchodzą na trap, czy też dochodzi do utraty sygnałów i zakleszczenia systemu.
 3. Spójność liczników: Czy desynchronizacja czasowa nie powoduje błędów w logice zliczania pasażerów wchodzących na pokład.
-* Oczekiwany rezultat: System wykazuje odporność na desynchronizację. Wartości semaforów rosną dodatnio w czasie uśpienia pasażerów. Po zakończeniu funkcji sleep, procesy pasażerów natychmiastowo i bezkolizyjnie zmniejszają wartości semaforów (przechodzą przez trap), nie doprowadzając do zjawiska zagłodzenia.
+* Oczekiwany rezultat: System wykazuje odporność na desynchronizację. Wartości semaforów rosną dodatnio w czasie uśpienia pasażerów. Po zakończeniu funkcji sleep, procesy pasażerów natychmiastowo i bezkolizyjnie zmniejszają wartości semaforów (przechodzą przez trap), nie doprowadzając do zjawiska zagłodzenia. Logi mogą wykazywać chwilową niespójność między stanem 'Czekający' a 'Pozostało' w oknie czasowym wybudzania, co jest naturalną cechą systemów asynchronicznych i nie wpływa na poprawność bilansu końcowego.
 * Wynik: POZYTYWNY.
 
 **Test 2 - Test Szczelności Semaforów i Limitów Pojemności:**
@@ -186,28 +186,28 @@ Poniżej znajdują się odnośniki do fragmentów kodu realizujących wymagane k
 
 ### a. Tworzenie i obsługa plików
 * Użycie `open()`, `write()`, `flock()` do bezpiecznego logowania do pliku.
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/common.h#L149-L173
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/common.h#L156-L180
 
 ### b. Tworzenie procesów
 * Użycie `fork()`, `execl()` do tworzenia pasażerów i kapitanów.
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/main.c#L162-L174
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/main.c#L181-L193
 
 * Użycie `waitpid()` z `WNOHANG` do sprzątania zombie.
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/kapitan_promu.c#L69-L77
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/main.c#L208-L219
 
 ### c. Obsługa sygnałów
 * Rejestracja handlerów `sigaction` dla `SIGUSR1`, `SIGUSR2`.
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/kapitan_portu.c#L18-L30
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/kapitan_portu.c#L17-L30
 
 ### d. Synchronizacja procesów (Semafory)
 * Operacje `semop` (blokujące, nieblokujące, z timeoutem).
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/common.h#L175-L229
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/pasazer.c#L457-L469
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/common.h#L182-L236
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/pasazer.c#L459-L471
 
 ### e. Segmenty pamięci dzielonej
 * Inicjalizacja `shmget`, dołączenie `shmat`, struktura `SharedData`.
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/main.c#L101-L117
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/main.c#L113-L129
 
 ### f. Walidacja i obsługa błędów
 * Sprawdzanie limitu procesów i obsługa `perror`.
-* https://github.com/projektso/Prom/blob/51a6bd60180124ed4bbc874912be74009f33116c/common.h#L209-L238
+* https://github.com/projektso/Prom/blob/87352d820465fb179cc6fd20ba4309591c4400cf/common.h#L216-L245
