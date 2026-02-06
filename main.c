@@ -11,8 +11,16 @@ int liczba_utworzonych = 0; //Liczba utworzonych procesów pasażerów
 //Wysyłanie sygnałów zakończenia do wszystkich procesów potomnych
 void kill_all_processes() {
     //Zakończenie kapitanów
-    if (pid_port > 0) kill(pid_port, SIGTERM);
-    if (pid_prom > 0) kill(pid_prom, SIGTERM);
+    if (pid_prom > 0) {
+        kill(pid_prom, SIGTERM);
+        waitpid(pid_prom, NULL, 0);
+        pid_prom = -1;
+    }
+    if (pid_port > 0) {
+        kill(pid_port, SIGTERM);
+        waitpid(pid_port, NULL, 0);
+        pid_port = -1;
+    }
     
     //Zakończenie pasażerów
     if (pid_pasazerowie) {
@@ -158,6 +166,10 @@ int main(int argc, char* argv[]) {
     semctl(semid, SEM_TIMER_SIGNAL, SETVAL, 0);
     semctl(semid, SEM_TRAP_EMPTY, SETVAL, 0);
     semctl(semid, SEM_REJS_WAIT, SETVAL, 0);
+    for (int i = 0; i < N_FLOTA; i++) {
+        semctl(semid, SEM_PROM_START_BASE + i, SETVAL, 0);
+    }
+
 
     //START SYMULACJI
     logger(C_G, "========== START SYMULACJI ==========");

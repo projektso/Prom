@@ -91,8 +91,9 @@ enum {
     SEM_TIMER_SIGNAL, //Sygnał zakończenia załadunku
     SEM_TRAP_EMPTY, //Sygnał że trap jest pusty
     SEM_REJS_WAIT, //Sygnał oczekiwania na pierwszy rejs
+    SEM_PROM_START_BASE,
 
-    SEM_COUNT //Łączna liczba semaforów
+    SEM_COUNT = SEM_PROM_START_BASE + N_FLOTA //Łączna liczba semaforów
 };
 
 //KOLORY TERMINALA
@@ -147,6 +148,8 @@ typedef struct {
     //Statystyki portu
     long stat_odprawieni;
     long stat_przeplyneli;
+
+    int prom_passengers[N_FLOTA];
 
 } SharedData;
 

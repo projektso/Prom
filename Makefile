@@ -41,7 +41,7 @@ test_spam: all
 	if [ -z "$$PROM_PID" ]; then echo "Nie znaleziono promu!"; kill $$MAIN_PID; exit 1; fi; \
 	echo "Namierzono Kapitana Promu (PID: $$PROM_PID). Wysyłam serię SIGUSR1..."; \
 	for i in 1 2 3 4 5; do \
-		kill -10 $$PROM_PID 2>/dev/null || true; \
+		pkill -USR1 kapitan_promu 2>/dev/null || true; \
 		echo "-> Strzał $$i/5 (Wymuszenie wypłynięcia)"; \
 		sleep 3; \
 	done; \

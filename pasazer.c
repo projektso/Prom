@@ -83,6 +83,7 @@ int main(int argc, char* argv[]) {
     
     //Sprawdzenie czy port nie jest zamknięty
     if (should_exit || sd->blokada_odprawy) {
+        logger(C_R, "P%d: Port zamknięty- wracam do domu.", id);
         zakoncz_podroz(semid, sd, id);
     }
 

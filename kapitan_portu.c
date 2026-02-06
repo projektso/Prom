@@ -8,7 +8,7 @@ void handle_sigusr1(int sig) {
     (void)sig;
     send_signal1 = 1;
 }
-
+ 
 void handle_sigusr2(int sig) {
     (void)sig;
     send_signal2 = 1;
