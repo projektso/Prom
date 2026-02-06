@@ -2,7 +2,7 @@
 
 **Autor:** Tomasz Jachowicz
 **Przedmiot:** Systemy Operacyjne
-**Data:** 02.02.2026r.
+**Data:** 06.02.2026r.
 
 
 ## 1. Założenia projektowe
